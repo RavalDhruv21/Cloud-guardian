@@ -1,0 +1,12 @@
+venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+*.zip
+build/
+node_modules/
+.next/
+cdk.out/
+response.json
+trust-policy.json
