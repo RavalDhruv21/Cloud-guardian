@@ -1,146 +1,244 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { getMetrics } from '@/lib/api'
 
-const instances = [
-  { id: 'i-0abc123456', type: 't3.large', status: 'critical', az: 'us-east-1a' },
-  { id: 'i-0def456789', type: 't3.micro', status: 'normal', az: 'us-east-1b' },
-  { id: 'i-0ghi789012', type: 'm5.xlarge', status: 'warning', az: 'us-east-1a' },
-  { id: 'i-0jkl012345', type: 't3.medium', status: 'normal', az: 'us-east-1c' },
-]
+const statusColor = (cpu: number) =>
+  cpu > 80 ? '#A32D2D' : cpu > 60 ? '#854F0B' : '#0F6E56'
 
-const generateData = (base: number, variance: number) =>
-  Array.from({length: 24}, (_, i) => ({
-    time: `${String(i).padStart(2,'0')}:00`,
-    cpu: Math.max(0, Math.min(100, base + (Math.random() - 0.5) * variance)),
-    network: Math.max(0, Math.random() * 50),
-    memory: Math.max(0, Math.min(100, base * 0.7 + (Math.random() - 0.5) * 10)),
-  }))
+const statusBg = (cpu: number) =>
+  cpu > 80 ? '#FCEBEB' : cpu > 60 ? '#FAEEDA' : '#E1F5EE'
 
-const metricsData: Record<string, ReturnType<typeof generateData>> = {
-  'i-0abc123456': generateData(90, 15),
-  'i-0def456789': generateData(5, 8),
-  'i-0ghi789012': generateData(72, 20),
-  'i-0jkl012345': generateData(15, 10),
-}
-
-const statusColor = (s: string) => s === 'critical' ? '#A32D2D' : s === 'warning' ? '#854F0B' : '#0F6E56'
-const statusBg = (s: string) => s === 'critical' ? '#FCEBEB' : s === 'warning' ? '#FAEEDA' : '#E1F5EE'
+const statusLabel = (cpu: number) =>
+  cpu > 80 ? 'critical' : cpu > 60 ? 'warning' : 'normal'
 
 export default function MetricsPage() {
-  const [selected, setSelected] = useState('i-0abc123456')
-  const data = metricsData[selected]
-  const instance = instances.find(i => i.id === selected)!
-  const currentCpu = Math.round(data[data.length - 1].cpu)
+  const [metrics, setMetrics] = useState<any[]>([])
+  const [selected, setSelected] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        const data = await getMetrics()
+        const items = data.metrics || []
+        setMetrics(items)
+        if (items.length > 0 && !selected) {
+          setSelected(items[0].instance_id)
+        }
+      } catch (err) {
+        console.error('Failed to fetch metrics:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchMetrics()
+    const interval = setInterval(fetchMetrics, 60000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Group metrics by instance
+  const instanceMap: Record<string, any[]> = {}
+  metrics.forEach(m => {
+    if (!instanceMap[m.instance_id]) instanceMap[m.instance_id] = []
+    instanceMap[m.instance_id].push(m)
+  })
+
+  const instances = Object.keys(instanceMap)
+  const selectedMetrics = selected ? instanceMap[selected] || [] : []
+
+  // Build chart data from real metrics
+  const chartData = selectedMetrics.map((m, i) => ({
+    time: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : `Point ${i}`,
+    cpu: parseFloat(m.cpu_avg || 0),
+    memory: parseFloat(m.cpu_avg || 0) * 0.7,
+    network: Math.random() * 30,
+  }))
+
+  // If only one data point, duplicate it for chart to render
+  if (chartData.length === 1) {
+    chartData.unshift({...chartData[0], time: 'earlier'})
+  }
+
+  const latestMetric = selectedMetrics[0]
+  const currentCpu = parseFloat(latestMetric?.cpu_avg || 0)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"/>
+          <div className="text-xs text-gray-400">Loading metrics...</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (instances.length === 0) {
+    return (
+      <div>
+        <div className="mb-6">
+          <h1 className="text-lg font-semibold text-gray-900">Live metrics</h1>
+          <p className="text-xs text-gray-400 mt-0.5">Real-time data from your AWS account</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center">
+          <div className="text-4xl mb-3">📊</div>
+          <div className="text-sm font-medium text-gray-700 mb-2">No metrics collected yet</div>
+          <div className="text-xs text-gray-400 mb-4">
+            Metrics are collected every 15 minutes from your running EC2 instances.
+            Make sure you have running EC2 instances in your AWS account.
+          </div>
+          <div className="text-xs text-gray-300">Next collection in ~15 minutes</div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-lg font-semibold text-gray-900">Live metrics</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Last 24 hours · updates every 15 minutes</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {instances.length} instance{instances.length > 1 ? 's' : ''} monitored · updates every 15 minutes
+          </p>
         </div>
       </div>
 
       {/* Instance selector */}
       <div className="grid grid-cols-4 gap-3 mb-6">
-        {instances.map(inst => (
-          <div
-            key={inst.id}
-            onClick={() => setSelected(inst.id)}
-            className="bg-white rounded-xl border shadow-sm p-3 cursor-pointer transition-all"
-            style={{
-              borderColor: selected === inst.id ? statusColor(inst.status) : '#f3f4f6',
-              borderWidth: selected === inst.id ? 2 : 1,
-              borderLeft: `3px solid ${statusColor(inst.status)}`
-            }}
-          >
-            <div className="text-xs font-medium text-gray-800 truncate">{inst.id}</div>
-            <div className="text-xs text-gray-400 mb-2">{inst.type}</div>
-            <span
-              className="text-xs font-medium px-2 py-0.5 rounded-full"
-              style={{background: statusBg(inst.status), color: statusColor(inst.status)}}
+        {instances.map(instanceId => {
+          const instanceMetrics = instanceMap[instanceId]
+          const latest = instanceMetrics[0]
+          const cpu = parseFloat(latest?.cpu_avg || 0)
+          return (
+            <div
+              key={instanceId}
+              onClick={() => setSelected(instanceId)}
+              className="bg-white rounded-xl border shadow-sm p-3 cursor-pointer transition-all hover:shadow-md"
+              style={{
+                borderLeft: `3px solid ${statusColor(cpu)}`,
+                borderTop: selected === instanceId ? `2px solid ${statusColor(cpu)}` : '1px solid #f3f4f6',
+                borderRight: selected === instanceId ? `2px solid ${statusColor(cpu)}` : '1px solid #f3f4f6',
+                borderBottom: selected === instanceId ? `2px solid ${statusColor(cpu)}` : '1px solid #f3f4f6',
+              }}
             >
-              {Math.round(metricsData[inst.id][23].cpu)}% CPU
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* Instance detail */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-4">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div>
-              <div className="text-sm font-semibold text-gray-900">{instance.id}</div>
-              <div className="text-xs text-gray-400">{instance.type} · {instance.az}</div>
+              <div className="text-xs font-medium text-gray-800 truncate mb-0.5">{instanceId}</div>
+              <div className="text-xs text-gray-400 mb-2">us-east-1</div>
+              <span
+                className="text-xs font-medium px-2 py-0.5 rounded-full"
+                style={{background: statusBg(cpu), color: statusColor(cpu)}}
+              >
+                {cpu.toFixed(1)}% CPU
+              </span>
             </div>
-            <span
-              className="text-xs font-medium px-2 py-1 rounded-full"
-              style={{background: statusBg(instance.status), color: statusColor(instance.status)}}
-            >
-              {instance.status}
-            </span>
-          </div>
-          <div className="text-right">
-            <div className="text-2xl font-bold" style={{color: statusColor(instance.status)}}>{currentCpu}%</div>
-            <div className="text-xs text-gray-400">current CPU</div>
-          </div>
-        </div>
-
-        {/* CPU Chart */}
-        <div className="mb-2">
-          <div className="text-xs font-medium text-gray-500 mb-3">CPU Utilization — last 24 hours</div>
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
-              <XAxis dataKey="time" tick={{fontSize: 10}} tickLine={false} axisLine={false} interval={3}/>
-              <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={v => `${v}%`}/>
-              <Tooltip
-                contentStyle={{fontSize: 11, border: '1px solid #e5e7eb', borderRadius: 8}}
-                formatter={(v: number) => [`${Math.round(v)}%`, 'CPU']}
-              />
-              <Line
-                type="monotone"
-                dataKey="cpu"
-                stroke={statusColor(instance.status)}
-                strokeWidth={2}
-                dot={false}
-                activeDot={{r: 4}}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+          )
+        })}
       </div>
 
-      {/* Memory + Network charts */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-          <div className="text-xs font-medium text-gray-500 mb-3">Memory Utilization</div>
-          <ResponsiveContainer width="100%" height={130}>
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
-              <XAxis dataKey="time" tick={{fontSize: 9}} tickLine={false} axisLine={false} interval={5}/>
-              <YAxis tick={{fontSize: 9}} tickLine={false} axisLine={false} domain={[0,100]} tickFormatter={v => `${v}%`}/>
-              <Tooltip contentStyle={{fontSize: 10, borderRadius: 8}} formatter={(v: number) => [`${Math.round(v)}%`, 'Memory']}/>
-              <Line type="monotone" dataKey="memory" stroke="#185FA5" strokeWidth={1.5} dot={false}/>
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+      {selected && (
+        <>
+          {/* Main chart card */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">{selected}</div>
+                  <div className="text-xs text-gray-400">us-east-1 · {selectedMetrics.length} data point{selectedMetrics.length > 1 ? 's' : ''} collected</div>
+                </div>
+                <span
+                  className="text-xs font-medium px-2 py-1 rounded-full"
+                  style={{background: statusBg(currentCpu), color: statusColor(currentCpu)}}
+                >
+                  {statusLabel(currentCpu)}
+                </span>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold" style={{color: statusColor(currentCpu)}}>
+                  {currentCpu.toFixed(1)}%
+                </div>
+                <div className="text-xs text-gray-400">current CPU avg</div>
+              </div>
+            </div>
 
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-          <div className="text-xs font-medium text-gray-500 mb-3">Network In/Out (MB)</div>
-          <ResponsiveContainer width="100%" height={130}>
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
-              <XAxis dataKey="time" tick={{fontSize: 9}} tickLine={false} axisLine={false} interval={5}/>
-              <YAxis tick={{fontSize: 9}} tickLine={false} axisLine={false} tickFormatter={v => `${v}MB`}/>
-              <Tooltip contentStyle={{fontSize: 10, borderRadius: 8}} formatter={(v: number) => [`${Math.round(v)} MB`, 'Network']}/>
-              <Line type="monotone" dataKey="network" stroke="#854F0B" strokeWidth={1.5} dot={false}/>
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+            <div className="text-xs font-medium text-gray-500 mb-3">CPU Utilization — collected data points</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                <XAxis dataKey="time" tick={{fontSize: 10}} tickLine={false} axisLine={false}/>
+                <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={v => `${v}%`}/>
+                <Tooltip
+                  contentStyle={{fontSize: 11, border: '1px solid #e5e7eb', borderRadius: 8}}
+                  formatter={(v: number) => [`${v.toFixed(1)}%`, 'CPU']}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="cpu"
+                  stroke={statusColor(currentCpu)}
+                  strokeWidth={2}
+                  dot={{r: 4, fill: statusColor(currentCpu)}}
+                  activeDot={{r: 6}}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Info bar */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4">
+            <div className="grid grid-cols-4 gap-4 text-center">
+              {[
+                { label: 'CPU avg', value: `${currentCpu.toFixed(2)}%` },
+                { label: 'CPU max', value: `${parseFloat(latestMetric?.cpu_max || 0).toFixed(2)}%` },
+                { label: 'Data points', value: selectedMetrics.length },
+                { label: 'Status', value: statusLabel(currentCpu) },
+              ].map(item => (
+                <div key={item.label}>
+                  <div className="text-xs text-gray-400 mb-1">{item.label}</div>
+                  <div
+                    className="text-xs font-medium"
+                    style={{color: item.label === 'Status' ? statusColor(currentCpu) : '#374151'}}
+                  >
+                    {item.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Memory + Network */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+              <div className="text-xs font-medium text-gray-500 mb-1">Memory Utilization (estimated)</div>
+              <div className="text-xs text-gray-300 mb-3">Based on CPU correlation — CloudWatch agent needed for exact memory</div>
+              <ResponsiveContainer width="100%" height={130}>
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6"/>
+                  <XAxis dataKey="time" tick={{fontSize: 9}} tickLine={false} axisLine={false}/>
+                  <YAxis tick={{fontSize: 9}} tickLine={false} axisLine={false} domain={[0, 100]} tickFormatter={v => `${v}%`}/>
+                  <Tooltip contentStyle={{fontSize: 10, borderRadius: 8}} formatter={(v: number) => [`${v.toFixed(1)}%`, 'Memory']}/>
+                  <Line type="monotone" dataKey="memory" stroke="#185FA5" strokeWidth={1.5} dot={{r: 3}} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+              <div className="text-xs font-medium text-gray-500 mb-3">All collected metrics</div>
+              <div className="overflow-y-auto" style={{maxHeight: 150}}>
+                {selectedMetrics.map((m, i) => (
+                  <div key={i} className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
+                    <div className="text-xs text-gray-400">
+                      {m.timestamp ? new Date(m.timestamp).toLocaleString() : `Point ${i}`}
+                    </div>
+                    <div className="text-xs font-medium" style={{color: statusColor(parseFloat(m.cpu_avg))}}>
+                      {parseFloat(m.cpu_avg).toFixed(2)}% CPU
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import boto3
 import json
+import decimal
 import os
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -78,6 +79,11 @@ def save_metrics_to_dynamodb(metrics_list):
 
     print(f"Saved {len(metrics_list)} metrics to DynamoDB")
 
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
+        return super().default(obj)
 
 def main(event=None, context=None):
     """Lambda handler — also callable locally"""
@@ -107,7 +113,7 @@ def main(event=None, context=None):
         'body': json.dumps({
             'message': f'Collected metrics for {len(all_metrics)} instances',
             'metrics': all_metrics
-        })
+        }, cls=DecimalEncoder)
     }
 
 if __name__ == '__main__':
