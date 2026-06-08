@@ -8,6 +8,7 @@ export default function SecurityPage() {
   const [events, setEvents] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'all' | 'auto-fixed' | 'review'>('all')
+  const [expandedId, setExpandedId] = useState<number | null>(null)
 
   useEffect(() => {
     const fetchEvents = async () => {
@@ -116,6 +117,8 @@ export default function SecurityPage() {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
+
+                    {/* Title + badge */}
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span className="text-sm font-medium text-gray-900">
                         {event.event_type || event.summary || 'Security event'}
@@ -131,16 +134,19 @@ export default function SecurityPage() {
                       )}
                     </div>
 
+                    {/* Subtitle */}
                     <div className="text-xs text-gray-400 mb-3">
-                      {event.instance_id || event.resource_id} · {event.timestamp ? new Date(event.timestamp).toLocaleString() : ''}
+                      {event.instance_id || event.resource_id || '—'} · {event.timestamp ? new Date(event.timestamp).toLocaleString() : ''}
                     </div>
 
+                    {/* Detail box */}
                     <div className="bg-gray-50 rounded-lg p-3 mb-3">
                       <div className="text-xs text-gray-700 leading-relaxed">
                         {event.likely_cause || event.detail || 'Security misconfiguration detected'}
                       </div>
                     </div>
 
+                    {/* Buttons */}
                     <div className="flex items-center gap-2">
                       {!isFixed && (
                         <button
@@ -151,10 +157,60 @@ export default function SecurityPage() {
                           🤖 Ask AI to investigate
                         </button>
                       )}
-                      <button className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
-                        View details
+                      <button
+                        onClick={() => setExpandedId(expandedId === i ? null : i)}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                      >
+                        {expandedId === i ? 'Hide details' : 'View details'}
                       </button>
                     </div>
+
+                    {/* Expanded details */}
+                    {expandedId === i && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-gray-50 rounded-lg p-3">
+                            <div className="text-xs font-medium text-gray-500 mb-1">Resource</div>
+                            <div className="text-xs text-gray-700 font-mono break-all">
+                              {event.instance_id || event.resource_id || '—'}
+                            </div>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-3">
+                            <div className="text-xs font-medium text-gray-500 mb-1">Detected at</div>
+                            <div className="text-xs text-gray-700">
+                              {event.timestamp ? new Date(event.timestamp).toLocaleString() : '—'}
+                            </div>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-3">
+                            <div className="text-xs font-medium text-gray-500 mb-1">Action taken</div>
+                            <div className="text-xs text-gray-700">
+                              {isFixed ? 'Auto-reverted by Cloud Guardian' : 'Manual review required'}
+                            </div>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-3">
+                            <div className="text-xs font-medium text-gray-500 mb-1">Severity</div>
+                            <div className="text-xs font-medium" style={{color: '#A32D2D'}}>
+                              {event.severity || 'critical'}
+                            </div>
+                          </div>
+                        </div>
+                        {event.recommended_action && (
+                          <div className="bg-gray-50 rounded-lg p-3 mt-3">
+                            <div className="text-xs font-medium text-gray-500 mb-1">Recommended action</div>
+                            <div className="text-xs text-gray-700 leading-relaxed">
+                              {event.recommended_action}
+                            </div>
+                          </div>
+                        )}
+                        {event.reverted && (
+                          <div className="mt-3 flex items-center gap-2 text-xs" style={{color: '#0F6E56'}}>
+                            <span>✓</span>
+                            <span>Auto-remediation successfully blocked the misconfiguration</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                   </div>
                 </div>
               </div>

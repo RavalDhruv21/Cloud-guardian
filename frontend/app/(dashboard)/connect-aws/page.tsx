@@ -34,10 +34,14 @@ export default function ConnectAWSPage() {
       setError('Invalid Role ARN format. Should start with arn:aws:iam::')
       return
     }
+    localStorage.setItem('aws_connected', 'true')
     setLoading(true)
     setError('')
 
-    // Simulate connection — real API call added in Phase 6
+    // Save region to localStorage so topbar updates
+    localStorage.setItem('selected_region', region)
+    window.dispatchEvent(new Event('region-changed'))
+
     setTimeout(() => {
       setLoading(false)
       setSuccess(true)
@@ -69,7 +73,35 @@ export default function ConnectAWSPage() {
                   <div className="text-sm font-medium text-gray-900 mb-1">{step.title}</div>
                   <div className="text-xs text-gray-500 leading-relaxed">{step.desc}</div>
                   {i === 0 && (
-                    <button className="mt-3 text-xs px-3 py-1.5 rounded-lg text-white transition-colors" style={{background: '#0F6E56'}}>
+                    // <button className="mt-3 text-xs px-3 py-1.5 rounded-lg text-white transition-colors" style={{background: '#0F6E56'}}>
+                    //   Download template
+                    // </button>
+                    <button
+                      onClick={() => {
+                        fetch('/cloudguardian-role.yaml')
+                          .then(res => res.text())
+                          .then(text => {
+                            const blob = new Blob([text], { type: 'application/octet-stream' })
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url
+                            a.download = 'cloudguardian-role.yaml'
+                            a.click()
+                            URL.revokeObjectURL(url)
+                          })
+                      }}
+                      style={{
+                        marginTop: '12px',
+                        fontSize: '12px',
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        background: '#0F6E56',
+                        color: '#fff',
+                        display: 'inline-block',
+                        cursor: 'pointer',
+                        border: 'none'
+                      }}
+                    >
                       Download template
                     </button>
                   )}
@@ -121,9 +153,13 @@ export default function ConnectAWSPage() {
                 </label>
                 <select
                   value={region}
-                  onChange={e => setRegion(e.target.value)}
+                  onChange={e => {
+                    setRegion(e.target.value)
+                    localStorage.setItem('selected_region', e.target.value)
+                    window.dispatchEvent(new Event('region-changed'))
+                  }}
                   className="w-full px-3 py-2.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500"
-                >
+                  >
                   {['us-east-1', 'us-west-2', 'eu-west-1', 'ap-south-1', 'ap-southeast-1'].map(r => (
                     <option key={r} value={r}>{r}</option>
                   ))}

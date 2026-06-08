@@ -31,14 +31,52 @@ def response(status_code, body):
     }
 
 # ── GET /metrics ──────────────────────────────────────────
-def get_metrics(account_id=None):
+def get_metrics(account_id=None, region=None):
     table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
     result = table.scan()
     items = result.get('Items', [])
     if account_id:
         items = [i for i in items if i.get('account_id') == account_id]
+    if region:
+        items = [i for i in items if i.get('region', 'us-east-1') == region]
     items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'metrics': items[:50]})
+
+
+def get_instance_metrics_history(instance_id, region='us-east-1'):
+    """Fetch last 24 hours of CPU data from CloudWatch"""
+    try:
+        from datetime import timedelta
+        cloudwatch = boto3.client('cloudwatch', region_name=region)
+        
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=24)
+        
+        result = cloudwatch.get_metric_statistics(
+            Namespace='AWS/EC2',
+            MetricName='CPUUtilization',
+            Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+            StartTime=start_time,
+            EndTime=end_time,
+            Period=3600,
+            Statistics=['Average', 'Maximum']
+        )
+        
+        datapoints = result.get('Datapoints', [])
+        datapoints.sort(key=lambda x: x['Timestamp'])
+        
+        chart_data = []
+        for dp in datapoints:
+            chart_data.append({
+                'time': dp['Timestamp'].strftime('%H:%M'),
+                'cpu': round(dp['Average'], 2),
+                'cpu_max': round(dp['Maximum'], 2),
+            })
+        
+        return response(200, {'history': chart_data, 'instance_id': instance_id})
+    except Exception as e:
+        return response(500, {'error': str(e)})
+
 
 # ── GET /anomalies ─────────────────────────────────────────
 def get_anomalies(query_params=None):
@@ -218,6 +256,40 @@ def connect_account(body):
         })
     except Exception as e:
         return response(400, {'error': f'Could not assume role: {str(e)}'})
+    
+    
+    
+def get_audit_logs(region='us-east-1'):
+    try:
+        cloudtrail = boto3.client('cloudtrail', region_name=region)
+        
+        result = cloudtrail.lookup_events(
+            MaxResults=50,
+        )
+        
+        events = []
+        for event in result.get('Events', []):
+            source = event.get('EventSource', '')
+            name = event.get('EventName', '')
+            if any(svc in source for svc in ['lambda', 'dynamodb', 's3', 'sns', 'apigateway', 'cloudwatch', 'cloudtrail']):
+                events.append({
+                    'event_id': event.get('EventId', ''),
+                    'action': name,
+                    'service': source.replace('.amazonaws.com', ''),
+                    'user': event.get('Username', 'system'),
+                    'status': 'success',
+                    'region': region,
+                    'time': event.get('EventTime', '').isoformat() if event.get('EventTime') else '',
+                    'detail': f"{name} — {', '.join([r.get('ResourceName', '') for r in event.get('Resources', [])])}"
+                })
+
+        events.sort(key=lambda x: x.get('time', ''), reverse=True)
+        return response(200, {'logs': events[:50]})
+
+    except Exception as e:
+        return response(500, {'error': str(e)})
+    
+    
 
 # ── Main router ────────────────────────────────────────────
 def main(event, context):
@@ -239,7 +311,8 @@ def main(event, context):
     print(f"{method} {path}")
 
     routes = {
-        ('GET',  '/metrics'):                  lambda: get_metrics(query.get('account_id')),
+        ('GET', '/metrics/history'):           lambda: get_instance_metrics_history(query.get('instance_id', ''),query.get('region', 'us-east-1')),
+        ('GET', '/metrics'):                   lambda: get_metrics(query.get('account_id'),query.get('region')),
         ('GET',  '/anomalies'):                lambda: get_anomalies(query),
         ('POST', '/anomalies/resolve'):        lambda: resolve_anomaly(body),
         ('GET',  '/cost-suggestions'):         lambda: get_cost_suggestions(query),
@@ -248,6 +321,7 @@ def main(event, context):
         ('GET',  '/reports'):                  lambda: get_reports(),
         ('POST', '/agent'):                    lambda: ask_agent(body),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),
+        ('GET', '/audit-logs'):                lambda: get_audit_logs(query.get('region', 'us-east-1')),
     }
 
     handler = routes.get((method, path))

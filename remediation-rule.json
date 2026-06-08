@@ -1,0 +1,12 @@
+{
+  "source": ["aws.ec2", "aws.s3"],
+  "detail-type": ["AWS API Call via CloudTrail"],
+  "detail": {
+    "eventName": [
+      "AuthorizeSecurityGroupIngress",
+      "PutBucketAcl",
+      "PutBucketPolicy",
+      "DeletePublicAccessBlock"
+    ]
+  }
+}

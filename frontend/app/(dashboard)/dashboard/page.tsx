@@ -10,6 +10,9 @@ export default function DashboardPage() {
   const [costs, setCosts] = useState<any[]>([])
   const [security, setSecurity] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  
+  const isFirstTime = typeof window !== 'undefined' && !localStorage.getItem('aws_connected')
+
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -111,7 +114,10 @@ export default function DashboardPage() {
                     🧠 {cpu > 80 ? 'High CPU detected — check for anomalies' : cpu > 60 ? 'CPU elevated — monitoring closely' : 'All metrics within normal range'}
                   </div>
                   <div className="flex gap-2">
-                    <button className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">
+                    <button
+                      onClick={() => router.push(`/metrics?instance=${instanceId}`)}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                    >
                       View details
                     </button>
                     <button
@@ -129,17 +135,13 @@ export default function DashboardPage() {
         </>
       ) : (
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8 text-center mb-6">
-          <div className="text-3xl mb-3">☁️</div>
-          <div className="text-sm font-medium text-gray-700 mb-2">No metrics yet</div>
-          <div className="text-xs text-gray-400 mb-4">Metrics are collected every 15 minutes. Check back soon or trigger a manual collection.</div>
-          <button
-            onClick={() => router.push('/connect-aws')}
-            className="text-xs px-4 py-2 rounded-lg text-white"
-            style={{background: '#0F6E56'}}
-          >
-            Connect AWS account
-          </button>
+        <div className="text-3xl mb-3">☁️</div>
+        <div className="text-sm font-medium text-gray-700 mb-2">No metrics yet</div>
+        <div className="text-xs text-gray-400 mb-4">
+          Metrics are collected every 15 minutes from your running EC2 instances. Check back soon.
         </div>
+        <div className="text-xs text-gray-300">Next collection in ~15 minutes</div>
+      </div>
       )}
 
       {/* Bottom row */}

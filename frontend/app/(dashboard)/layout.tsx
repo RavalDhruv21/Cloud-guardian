@@ -1,7 +1,9 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { getAnomalies } from '@/lib/api'
+import { getRegion, setRegion } from '@/lib/region'
 
 const navItems = [
   {
@@ -14,7 +16,7 @@ const navItems = [
   {
     section: 'Monitor',
     items: [
-      { label: 'Anomalies', href: '/anomalies', icon: '⚠', badge: 3 },
+      { label: 'Anomalies', href: '/anomalies', icon: '⚠', badge: null },
       { label: 'Security', href: '/security', icon: '🛡' },
       { label: 'Cost optimizer', href: '/cost-optimizer', icon: '💰' },
     ]
@@ -49,6 +51,37 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname()
   const [accountLabel] = useState('My AWS Account')
+
+  const [unresolvedCount, setUnresolvedCount] = useState(0)
+
+  useEffect(() => {
+    const fetchCount = async () => {
+      try {
+        const data = await getAnomalies()
+        const unresolved = (data.anomalies || []).filter((a: any) => !a.resolved).length
+        setUnresolvedCount(unresolved)
+      } catch (err) {
+        setUnresolvedCount(0)
+      }
+    }
+    fetchCount()
+  }, [])
+
+
+  const [currentRegion, setCurrentRegion] = useState('us-east-1')
+
+  useEffect(() => {
+    setCurrentRegion(getRegion())
+    const handleRegionChange = () => setCurrentRegion(getRegion())
+    window.addEventListener('region-changed', handleRegionChange)
+    return () => window.removeEventListener('region-changed', handleRegionChange)
+  }, [])
+
+  const handleRegionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setRegion(e.target.value)
+    setCurrentRegion(e.target.value)
+    window.location.reload()
+  }
 
   return (
     <div className="flex h-screen overflow-hidden" style={{background: '#0A1628'}}>
@@ -92,9 +125,9 @@ export default function DashboardLayout({
                   >
                     <span>{item.icon}</span>
                     <span className="flex-1">{item.label}</span>
-                    {item.badge && (
+                    {item.label === 'Anomalies' && unresolvedCount > 0 && (
                       <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{background: '#A32D2D', color: '#fff'}}>
-                        {item.badge}
+                        {unresolvedCount}
                       </span>
                     )}
                   </Link>
@@ -138,12 +171,18 @@ export default function DashboardLayout({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <select
+              value={currentRegion}
+              onChange={handleRegionChange}
+              className="text-xs px-3 py-1.5 rounded-full border focus:outline-none focus:border-emerald-500"
+              style={{borderColor: '#e5e7eb', color: '#6b7280', background: '#fff'}}
+            >
+              {['us-east-1', 'us-west-2', 'eu-west-1', 'ap-south-1', 'ap-southeast-1'].map(r => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
             <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border" style={{borderColor: '#e5e7eb', color: '#6b7280'}}>
-              <span>☁</span>
-              <span>us-east-1</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border" style={{borderColor: '#e5e7eb', color: '#6b7280'}}>
-              <span>Account #8087-1503</span>
+              <span>Account #{process.env.NEXT_PUBLIC_AWS_ACCOUNT_ID || '—'}</span>
             </div>
           </div>
         </div>

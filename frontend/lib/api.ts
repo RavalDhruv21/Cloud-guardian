@@ -20,7 +20,18 @@ api.interceptors.request.use((config) => {
 
 // Metrics
 export const getMetrics = async (accountId?: string) => {
-  const res = await api.get('/metrics', { params: { account_id: accountId } })
+  const region = typeof window !== 'undefined' ? localStorage.getItem('selected_region') || 'us-east-1' : 'us-east-1'
+  const res = await api.get('/metrics', { params: { account_id: accountId, region } })
+  return res.data
+}
+
+export const getMetricsHistory = async (instanceId: string) => {
+  const region = typeof window !== 'undefined'
+    ? localStorage.getItem('selected_region') || 'us-east-1'
+    : 'us-east-1'
+  const res = await api.get('/metrics/history', {
+    params: { instance_id: instanceId, region }
+  })
   return res.data
 }
 
@@ -30,7 +41,8 @@ export const getAnomalies = async (filters?: {
   resolved?: boolean
   account_id?: string
 }) => {
-  const res = await api.get('/anomalies', { params: filters })
+  const region = typeof window !== 'undefined' ? localStorage.getItem('selected_region') || 'us-east-1' : 'us-east-1'
+  const res = await api.get('/anomalies', { params: { ...filters, region } })
   return res.data
 }
 
@@ -41,7 +53,8 @@ export const resolveAnomaly = async (instanceId: string, timestamp: string) => {
 
 // Cost suggestions
 export const getCostSuggestions = async (accountId?: string) => {
-  const res = await api.get('/cost-suggestions', { params: { account_id: accountId } })
+  const region = typeof window !== 'undefined' ? localStorage.getItem('selected_region') || 'us-east-1' : 'us-east-1'
+  const res = await api.get('/cost-suggestions', { params: { account_id: accountId, region } })
   return res.data
 }
 
@@ -57,7 +70,16 @@ export const stopResource = async (resourceId: string, resourceType: string) => 
 
 // Security events
 export const getSecurityEvents = async (accountId?: string) => {
-  const res = await api.get('/security-events', { params: { account_id: accountId } })
+  const region = typeof window !== 'undefined' ? localStorage.getItem('selected_region') || 'us-east-1' : 'us-east-1'
+  const res = await api.get('/security-events', { params: { account_id: accountId, region } })
+  return res.data
+}
+
+//Audit logs
+
+export const getAuditLogs = async (region?: string) => {
+  const r = region || (typeof window !== 'undefined' ? localStorage.getItem('selected_region') || 'us-east-1' : 'us-east-1')
+  const res = await api.get('/audit-logs', { params: { region: r } })
   return res.data
 }
 

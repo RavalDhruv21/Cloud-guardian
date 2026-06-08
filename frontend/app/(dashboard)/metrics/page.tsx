@@ -1,7 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { getMetrics } from '@/lib/api'
+import { getMetrics, getMetricsHistory } from '@/lib/api'
 
 const statusColor = (cpu: number) =>
   cpu > 80 ? '#A32D2D' : cpu > 60 ? '#854F0B' : '#0F6E56'
@@ -14,8 +15,12 @@ const statusLabel = (cpu: number) =>
 
 export default function MetricsPage() {
   const [metrics, setMetrics] = useState<any[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
+  const searchParams = useSearchParams()
+  const instanceFromUrl = searchParams.get('instance')
+  const [selected, setSelected] = useState<string | null>(instanceFromUrl)
   const [loading, setLoading] = useState(true)
+  const [chartHistory, setChartHistory] = useState<any[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -23,8 +28,10 @@ export default function MetricsPage() {
         const data = await getMetrics()
         const items = data.metrics || []
         setMetrics(items)
-        if (items.length > 0 && !selected) {
-          setSelected(items[0].instance_id)
+        const firstInstance = instanceFromUrl || (items.length > 0 ? items[0].instance_id : null)
+        if (firstInstance && !selected) {
+          setSelected(firstInstance)
+          fetchHistory(firstInstance)
         }
       } catch (err) {
         console.error('Failed to fetch metrics:', err)
@@ -33,8 +40,6 @@ export default function MetricsPage() {
       }
     }
     fetchMetrics()
-    const interval = setInterval(fetchMetrics, 60000)
-    return () => clearInterval(interval)
   }, [])
 
   // Group metrics by instance
@@ -94,6 +99,40 @@ export default function MetricsPage() {
     )
   }
 
+const fetchHistory = async (instanceId: string) => {
+  setHistoryLoading(true)
+  try {
+    const data = await getMetricsHistory(instanceId)
+    const history = data.history || []
+    
+    // If only one point or empty, show what we have from DynamoDB
+    if (history.length === 0) {
+      const instanceMetrics = instanceMap[instanceId] || []
+      const fallback = instanceMetrics.map((m: any, i: number) => ({
+        time: m.timestamp
+          ? new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+          : `Point ${i}`,
+        cpu: parseFloat(m.cpu_avg || 0),
+        cpu_max: parseFloat(m.cpu_max || 0),
+      }))
+      setChartHistory(fallback.length > 1 ? fallback : [...fallback, ...fallback])
+    } else {
+      setChartHistory(history)
+    }
+  } catch (err) {
+    // Fallback to DynamoDB data
+    const instanceMetrics = instanceMap[instanceId] || []
+    const fallback = instanceMetrics.map((m: any, i: number) => ({
+      time: new Date(m.timestamp || '').toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}),
+      cpu: parseFloat(m.cpu_avg || 0),
+      cpu_max: parseFloat(m.cpu_max || 0),
+    }))
+    setChartHistory(fallback.length > 1 ? fallback : [...fallback, ...fallback])
+  } finally {
+    setHistoryLoading(false)
+  }
+}
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -114,7 +153,10 @@ export default function MetricsPage() {
           return (
             <div
               key={instanceId}
-              onClick={() => setSelected(instanceId)}
+              onClick={() => {
+                setSelected(instanceId)
+                fetchHistory(instanceId)
+              }}
               className="bg-white rounded-xl border shadow-sm p-3 cursor-pointer transition-all hover:shadow-md"
               style={{
                 borderLeft: `3px solid ${statusColor(cpu)}`,

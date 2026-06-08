@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Cloud Guardian Monitor Role — read-only access for infrastructure monitoring
+
+Resources:
+  CloudGuardianMonitorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudGuardianMonitorRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::808715035605:root'
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CloudGuardianReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:GetMetricData
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeSecurityGroups
+                  - rds:DescribeDBInstances
+                  - ce:GetCostAndUsage
+                  - s3:ListAllMyBuckets
+                  - lambda:ListFunctions
+                Resource: '*'
+
+Outputs:
+  RoleArn:
+    Description: Copy this ARN and paste it into Cloud Guardian
+    Value: !GetAtt CloudGuardianMonitorRole.Arn
