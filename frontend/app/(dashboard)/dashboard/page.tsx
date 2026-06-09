@@ -10,11 +10,10 @@ export default function DashboardPage() {
   const [costs, setCosts] = useState<any[]>([])
   const [security, setSecurity] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [awsConnected, setAwsConnected] = useState(false)
   
-  const isFirstTime = typeof window !== 'undefined' && !localStorage.getItem('aws_connected')
-
-
   useEffect(() => {
+    setAwsConnected(localStorage.getItem('aws_connected') === 'true')
     const fetchAll = async () => {
       try {
         const [m, a, c, s] = await Promise.all([
@@ -46,147 +45,211 @@ export default function DashboardPage() {
   }, 0)
 
   // Get unique instances from metrics
-  const instances = [...new Set(metrics.map(m => m.instance_id))].slice(0, 4)
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const freshMetrics = metrics.filter((m: any) => m.timestamp > oneDayAgo || m.collected_at > oneDayAgo)
+  const instances = [...new Set(freshMetrics.map((x: any) => x.instance_id))].slice(0, 4)
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"/>
-          <div className="text-xs text-gray-400">Loading your AWS data...</div>
+      <div className="flex items-center justify-center h-64 animate-entrance">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" style={{boxShadow: '0 0 15px rgba(16,185,129,0.2)'}}/>
+          <div className="text-sm font-medium" style={{color: 'rgba(255,255,255,0.5)'}}>Loading your AWS data...</div>
         </div>
       </div>
     )
   }
 
+  if (!awsConnected) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[70vh] text-center animate-entrance">
+        <div className="text-7xl mb-6 opacity-80" style={{textShadow: '0 0 30px rgba(255,255,255,0.2)'}}>☁️</div>
+        <h1 className="text-2xl font-bold text-white mb-3">Welcome to Cloud Guardian</h1>
+        <p className="text-sm text-white/50 max-w-md mx-auto mb-8 leading-relaxed">
+          Connect your AWS account to start monitoring your infrastructure, detecting anomalies, and optimizing costs.
+        </p>
+        <button
+          onClick={() => router.push('/connect-aws')}
+          className="text-sm px-8 py-3.5 rounded-xl text-white font-bold transition-all hover:scale-105"
+          style={{background: 'linear-gradient(135deg, #0F6E56, #094d3c)', boxShadow: '0 4px 15px rgba(15,110,86,0.3)', border: 'none', cursor: 'pointer'}}
+        >
+          🔌 Connect AWS account
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div>
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+    <div className="max-w-6xl mx-auto">
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-5 mb-8">
         {[
-          { label: 'EC2 instances', value: instances.length || '—', sub: `${metrics.length} metrics collected`, color: '#0F6E56' },
-          { label: 'Anomalies this week', value: unresolvedAnomalies.length || '0', sub: `${anomalies.length} total detected`, color: unresolvedAnomalies.length > 0 ? '#A32D2D' : '#0F6E56' },
-          { label: 'Potential savings', value: totalSavings > 0 ? `$${totalSavings.toFixed(0)}` : '$0', sub: `${costs.length} opportunities found`, color: '#854F0B' },
-          { label: 'Security events', value: security.length || '0', sub: 'from CloudTrail', color: '#185FA5' },
-        ].map((stat) => (
-          <div key={stat.label} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-            <div className="text-xs text-gray-400 mb-2">{stat.label}</div>
-            <div className="text-2xl font-semibold mb-1" style={{color: stat.color}}>{stat.value}</div>
-            <div className="text-xs text-gray-400">{stat.sub}</div>
+          { label: 'EC2 instances', value: instances.length || '—', sub: `${metrics.length} metrics collected`, color: '#34D399', glow: 'rgba(52,211,153,0.15)', delay: 'animate-entrance' },
+          { label: 'Anomalies this week', value: unresolvedAnomalies.length || '0', sub: `${anomalies.length} total detected`, color: unresolvedAnomalies.length > 0 ? '#F87171' : '#34D399', glow: unresolvedAnomalies.length > 0 ? 'rgba(248,113,113,0.15)' : 'rgba(52,211,153,0.15)', delay: 'animate-entrance-delay-1' },
+          { label: 'Potential savings', value: totalSavings > 0 ? `$${totalSavings.toFixed(0)}` : '$0', sub: `${costs.length} opportunities found`, color: '#FBBF24', glow: 'rgba(251,191,36,0.15)', delay: 'animate-entrance-delay-2' },
+          { label: 'Security events', value: security.length || '0', sub: 'from CloudTrail', color: '#60A5FA', glow: 'rgba(96,165,250,0.15)', delay: 'animate-entrance-delay-2' },
+        ].map((stat, i) => (
+          <div key={stat.label} className={`auth-glass p-5 relative overflow-hidden group ${stat.delay}`} style={{animationDelay: `${i * 0.1}s`}}>
+            {/* Glow background on hover */}
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{background: `radial-gradient(circle at top right, ${stat.glow}, transparent 70%)`}} />
+            
+            <div className="text-xs font-semibold uppercase tracking-wider mb-2 relative z-10" style={{color: 'rgba(255,255,255,0.4)'}}>{stat.label}</div>
+            <div className="text-3xl font-bold mb-1 relative z-10" style={{color: stat.color, textShadow: `0 0 20px ${stat.glow}`}}>{stat.value}</div>
+            <div className="text-xs relative z-10" style={{color: 'rgba(255,255,255,0.3)'}}>{stat.sub}</div>
           </div>
         ))}
       </div>
 
       {/* EC2 instances */}
-      {instances.length > 0 ? (
-        <>
-          <div className="mb-4">
-            <h2 className="text-xs font-medium text-gray-400 uppercase tracking-wider">EC2 Instances — Latest CPU</h2>
-          </div>
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            {instances.map(instanceId => {
-              const instanceMetrics = metrics.filter(m => m.instance_id === instanceId)
-              const latest = instanceMetrics[0]
-              const cpu = parseFloat(latest?.cpu_avg || 0)
-              const status = cpu > 80 ? 'critical' : cpu > 60 ? 'warning' : 'normal'
-              const statusColor = status === 'critical' ? '#A32D2D' : status === 'warning' ? '#854F0B' : '#0F6E56'
-              const statusBg = status === 'critical' ? '#FCEBEB' : status === 'warning' ? '#FAEEDA' : '#E1F5EE'
+      <div className="animate-entrance" style={{animationDelay: '0.3s'}}>
+        {instances.length > 0 ? (
+          <>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-white">EC2 Instances — Latest CPU</h2>
+              <button onClick={() => router.push('/metrics')} className="text-xs font-medium hover:text-emerald-400 transition-colors" style={{color: 'rgba(255,255,255,0.5)'}}>View all →</button>
+            </div>
+            <div className="grid grid-cols-2 gap-5 mb-8">
+              {instances.map((instanceId, i) => {
+                const instanceMetrics = freshMetrics.filter((m: any) => m.instance_id === instanceId) 
+                const latest = instanceMetrics[0]
+                const cpu = parseFloat(latest?.cpu_avg || 0)
+                const status = cpu > 80 ? 'critical' : cpu > 60 ? 'warning' : 'normal'
+                const statusColor = status === 'critical' ? '#F87171' : status === 'warning' ? '#FBBF24' : '#34D399'
+                const statusBg = status === 'critical' ? 'rgba(248,113,113,0.1)' : status === 'warning' ? 'rgba(251,191,36,0.1)' : 'rgba(52,211,153,0.1)'
 
-              return (
-                <div
-                  key={instanceId}
-                  className="bg-white rounded-xl border shadow-sm p-4"
-                  style={{borderLeft: `3px solid ${statusColor}`, borderTop: '1px solid #f3f4f6', borderRight: '1px solid #f3f4f6', borderBottom: '1px solid #f3f4f6'}}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <div className="text-sm font-medium text-gray-800">{instanceId}</div>
-                      <div className="text-xs text-gray-400">us-east-1</div>
+                return (
+                  <div
+                    key={instanceId}
+                    className="auth-glass p-5 transition-all hover:border-gray-600"
+                    style={{borderLeft: `3px solid ${statusColor}`}}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <div className="text-sm font-semibold text-white mb-0.5">{instanceId}</div>
+                        <div className="text-xs" style={{color: 'rgba(255,255,255,0.4)'}}>us-east-1</div>
+                      </div>
+                      <span className="text-xs font-bold px-3 py-1.5 rounded-full" style={{background: statusBg, color: statusColor, border: `1px solid ${statusBg}`}}>
+                        {cpu.toFixed(1)}% CPU
+                      </span>
                     </div>
-                    <span className="text-xs font-medium px-2 py-1 rounded-full" style={{background: statusBg, color: statusColor}}>
-                      {cpu.toFixed(1)}% CPU
-                    </span>
+                    
+                    <div className="h-2 rounded-full mb-4 overflow-hidden" style={{background: 'rgba(255,255,255,0.05)'}}>
+                      <div className="h-full rounded-full transition-all duration-1000 ease-out" style={{width: `${cpu}%`, background: statusColor, boxShadow: `0 0 10px ${statusColor}`}}/>
+                    </div>
+                    
+                    <div className="text-xs rounded-xl px-4 py-3 mb-4" style={{background: 'rgba(255,255,255,0.02)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.05)'}}>
+                      🧠 {cpu > 80 ? 'High CPU detected — check for anomalies' : cpu > 60 ? 'CPU elevated — monitoring closely' : 'All metrics within normal range'}
+                    </div>
+                    
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => router.push(`/metrics?instance=${instanceId}`)}
+                        className="text-xs font-medium px-4 py-2 rounded-lg transition-colors"
+                        style={{background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)'}}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                      >
+                        View details
+                      </button>
+                      <button
+                        onClick={() => router.push('/agent-ai')}
+                        className="text-xs font-medium px-4 py-2 rounded-lg transition-all glow-btn"
+                        style={{background: 'linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.2))', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.3)'}}
+                      >
+                        🤖 Ask AI
+                      </button>
+                    </div>
                   </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full mb-3 overflow-hidden">
-                    <div className="h-full rounded-full" style={{width: `${cpu}%`, background: statusColor}}/>
-                  </div>
-                  <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 mb-3">
-                    🧠 {cpu > 80 ? 'High CPU detected — check for anomalies' : cpu > 60 ? 'CPU elevated — monitoring closely' : 'All metrics within normal range'}
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => router.push(`/metrics?instance=${instanceId}`)}
-                      className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
-                    >
-                      View details
-                    </button>
-                    <button
-                      onClick={() => router.push('/agent-ai')}
-                      className="text-xs px-3 py-1.5 rounded-lg"
-                      style={{background: '#f0f9f4', color: '#0F6E56', border: '1px solid #a7f3d0'}}
-                    >
-                      🤖 Ask AI
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="auth-glass rounded-2xl p-10 text-center mb-8">
+            <div className="text-4xl mb-4 opacity-80">☁️</div>
+            <div className="text-base font-semibold text-white mb-2">No metrics yet</div>
+            <div className="text-sm mb-5 max-w-md mx-auto" style={{color: 'rgba(255,255,255,0.5)'}}>
+              Metrics are collected every 15 minutes from your running EC2 instances.
+            </div>
+            <div className="inline-flex items-center gap-2 text-xs font-medium px-4 py-2 rounded-full" style={{background: 'rgba(16,185,129,0.1)', color: '#34D399'}}>
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Next collection in ~15 minutes
+            </div>
           </div>
-        </>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8 text-center mb-6">
-        <div className="text-3xl mb-3">☁️</div>
-        <div className="text-sm font-medium text-gray-700 mb-2">No metrics yet</div>
-        <div className="text-xs text-gray-400 mb-4">
-          Metrics are collected every 15 minutes from your running EC2 instances. Check back soon.
-        </div>
-        <div className="text-xs text-gray-300">Next collection in ~15 minutes</div>
+        )}
       </div>
-      )}
 
       {/* Bottom row */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-5 animate-entrance" style={{animationDelay: '0.4s'}}>
         {/* Recent anomalies */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-gray-800">Recent anomalies</h3>
-            <span className="text-xs text-gray-400">last 24h</span>
+        <div className="auth-glass p-5">
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-sm font-semibold text-white">Recent anomalies</h3>
+            <span className="text-xs font-medium px-2 py-1 rounded-md" style={{background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)'}}>last 24h</span>
           </div>
-          {anomalies.slice(0, 4).length > 0 ? anomalies.slice(0, 4).map((item: any, i: number) => (
-            <div key={i} className="flex items-start gap-3 py-2.5 border-b border-gray-50 last:border-0">
-              <div className="w-2 h-2 rounded-full mt-1 flex-shrink-0"
-                style={{background: item.severity === 'critical' ? '#A32D2D' : item.severity === 'high' ? '#854F0B' : '#185FA5'}}/>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium text-gray-800 truncate">{item.summary}</div>
-                <div className="text-xs text-gray-400 truncate">{item.instance_id}</div>
-              </div>
-              <div className="text-xs text-gray-300 flex-shrink-0">{item.severity}</div>
+          {anomalies.slice(0, 4).length > 0 ? (
+            <div className="space-y-1">
+              {anomalies.slice(0, 4).map((item: any, i: number) => (
+                <div key={i} className="flex items-start gap-3 p-3 rounded-xl transition-colors hover:bg-white/5 cursor-pointer">
+                  <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
+                    style={{
+                      background: item.severity === 'critical' ? '#F87171' : item.severity === 'high' ? '#FBBF24' : '#60A5FA',
+                      boxShadow: `0 0 8px ${item.severity === 'critical' ? '#F87171' : item.severity === 'high' ? '#FBBF24' : '#60A5FA'}`
+                    }}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white truncate mb-0.5">{item.summary}</div>
+                    <div className="text-xs truncate" style={{color: 'rgba(255,255,255,0.4)'}}>{item.instance_id}</div>
+                  </div>
+                  <div className="text-xs font-medium px-2 py-1 rounded flex-shrink-0 uppercase tracking-wider" 
+                    style={{
+                      background: item.severity === 'critical' ? 'rgba(248,113,113,0.1)' : 'rgba(255,255,255,0.05)',
+                      color: item.severity === 'critical' ? '#FCA5A5' : 'rgba(255,255,255,0.5)'
+                    }}>
+                    {item.severity}
+                  </div>
+                </div>
+              ))}
             </div>
-          )) : (
-            <div className="text-center py-6 text-xs text-gray-400">No anomalies detected ✅</div>
+          ) : (
+            <div className="text-center py-8">
+              <div className="text-2xl mb-2 opacity-50">✨</div>
+              <div className="text-sm text-white font-medium mb-1">No anomalies detected</div>
+              <div className="text-xs" style={{color: 'rgba(255,255,255,0.4)'}}>All systems running normally</div>
+            </div>
           )}
         </div>
 
         {/* Cost suggestions */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-gray-800">Cost optimizer</h3>
+        <div className="auth-glass p-5">
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-sm font-semibold text-white">Cost optimizer</h3>
             {totalSavings > 0 && (
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{background: '#E1F5EE', color: '#0F6E56'}}>
+              <span className="text-xs font-bold px-3 py-1 rounded-full border" style={{background: 'rgba(16,185,129,0.1)', color: '#34D399', borderColor: 'rgba(16,185,129,0.2)'}}>
                 ${totalSavings.toFixed(0)}/mo savings
               </span>
             )}
           </div>
-          {costs.slice(0, 3).length > 0 ? costs.slice(0, 3).map((item: any, i: number) => (
-            <div key={i} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-gray-700 truncate">{item.issue}</div>
-                <div className="text-xs text-gray-400 truncate">{item.resource_id}</div>
-              </div>
-              <div className="text-xs font-medium flex-shrink-0" style={{color: '#0F6E56'}}>{item.estimated_saving}</div>
+          {costs.slice(0, 3).length > 0 ? (
+            <div className="space-y-1">
+              {costs.slice(0, 3).map((item: any, i: number) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-xl transition-colors hover:bg-white/5 cursor-pointer">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{background: 'rgba(255,255,255,0.05)'}}>
+                    <span className="text-sm">💰</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white truncate mb-0.5">{item.issue}</div>
+                    <div className="text-xs truncate" style={{color: 'rgba(255,255,255,0.4)'}}>{item.resource_id}</div>
+                  </div>
+                  <div className="text-sm font-bold flex-shrink-0" style={{color: '#34D399'}}>{item.estimated_saving}</div>
+                </div>
+              ))}
             </div>
-          )) : (
-            <div className="text-center py-6 text-xs text-gray-400">No cost issues found ✅</div>
+          ) : (
+            <div className="text-center py-8">
+              <div className="text-2xl mb-2 opacity-50">✅</div>
+              <div className="text-sm text-white font-medium mb-1">Highly optimized</div>
+              <div className="text-xs" style={{color: 'rgba(255,255,255,0.4)'}}>No cost-saving opportunities found</div>
+            </div>
           )}
         </div>
       </div>

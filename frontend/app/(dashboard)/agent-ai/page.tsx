@@ -15,11 +15,13 @@ export default function AgentAIPage() {
   const [contextLoading, setContextLoading] = useState(true)
   const [accountContext, setAccountContext] = useState('')
   const [contextChips, setContextChips] = useState<any[]>([])
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const chatContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({behavior: 'smooth'})
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
+    }
   }, [messages])
 
   useEffect(() => {
@@ -49,12 +51,12 @@ export default function AgentAIPage() {
         return sum + (isNaN(amt) ? 0 : amt)
       }, 0)
 
-      // Build context chips for display
+      // Build context chips for display (Dark mode adapted colors)
       setContextChips([
-        { label: `${instances.length} EC2 instances`, color: '#0F6E56', bg: '#E1F5EE' },
-        { label: `${unresolved.length} anomalies`, color: unresolved.length > 0 ? '#A32D2D' : '#0F6E56', bg: unresolved.length > 0 ? '#FCEBEB' : '#E1F5EE' },
-        { label: `$${totalSavings.toFixed(0)} savings found`, color: '#854F0B', bg: '#FAEEDA' },
-        { label: `Region: ${region}`, color: '#185FA5', bg: '#E6F1FB' },
+        { label: `${instances.length} EC2 instances`, color: '#34D399', bg: 'rgba(16,185,129,0.15)' },
+        { label: `${unresolved.length} anomalies`, color: unresolved.length > 0 ? '#F87171' : '#34D399', bg: unresolved.length > 0 ? 'rgba(248,113,113,0.15)' : 'rgba(16,185,129,0.15)' },
+        { label: `$${totalSavings.toFixed(0)} savings found`, color: '#FBBF24', bg: 'rgba(251,191,36,0.15)' },
+        { label: `Region: ${region}`, color: '#60A5FA', bg: 'rgba(59,130,246,0.15)' },
       ])
 
       // Build context string for AI
@@ -96,7 +98,7 @@ export default function AgentAIPage() {
     } catch (err) {
       setAccountContext('AWS account connected')
       setContextChips([
-        { label: 'Account connected', color: '#0F6E56', bg: '#E1F5EE' }
+        { label: 'Account connected', color: '#34D399', bg: 'rgba(16,185,129,0.15)' }
       ])
       setMessages([{
         role: 'assistant',
@@ -176,7 +178,7 @@ If asked about specific instances, refer to the real instance IDs from the conte
     return content
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/`(.*?)`/g, '<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;font-size:11px">$1</code>')
+      .replace(/`(.*?)`/g, '<code style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;font-size:11px;color:#34D399">$1</code>')
       .split('\n')
       .join('<br/>')
   }
@@ -191,47 +193,48 @@ If asked about specific instances, refer to the real instance IDs from the conte
   ]
 
   return (
-    <div className="flex flex-col" style={{height: 'calc(100vh - 96px)'}}>
+    // Replaced height calculation to properly fill the remaining space without overflowing
+    <div className="flex flex-col h-[calc(100vh-140px)] animate-entrance w-full">
 
       {/* Header */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">Agent AI</h1>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <h1 className="text-lg font-semibold text-white">Agent AI</h1>
+          <p className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.5)'}}>
             {contextLoading ? 'Loading your AWS account data...' : 'Knows your real AWS account — ask anything'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             onClick={loadContext}
             disabled={contextLoading}
-            className="text-xs px-3 py-1.5 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+            className="text-xs px-4 py-2 rounded-full border transition-all disabled:opacity-40 hover:bg-white/5"
+            style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'}}
           >
             {contextLoading ? 'Loading...' : 'Refresh context'}
           </button>
           <div
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full"
-            style={{background: '#E1F5EE', color: '#0F6E56'}}
+            className="flex items-center gap-2 text-xs px-4 py-2 rounded-full font-medium shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+            style={{background: 'rgba(16,185,129,0.1)', color: '#34D399', border: '1px solid rgba(16,185,129,0.2)'}}
           >
-            <div className="w-1.5 h-1.5 rounded-full" style={{background: '#1D9E75'}}></div>
-            {contextLoading ? 'Loading...' : 'Context loaded'}
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+            {contextLoading ? 'Syncing...' : 'Context active'}
           </div>
         </div>
       </div>
 
       {/* Context bar */}
       <div
-        className="flex items-center gap-2 flex-wrap mb-4 flex-shrink-0 p-3 rounded-xl border"
-        style={{background: '#f9fafb', borderColor: '#e5e7eb'}}
+        className="flex items-center gap-2 flex-wrap mb-4 flex-shrink-0 p-3 rounded-xl auth-glass"
       >
-        <span className="text-xs text-gray-400">AI is aware of:</span>
+        <span className="text-xs font-medium uppercase tracking-wider" style={{color: 'rgba(255,255,255,0.4)'}}>AI context:</span>
         {contextLoading ? (
-          <span className="text-xs text-gray-300">Fetching live data...</span>
+          <span className="text-xs text-white/50">Fetching live data...</span>
         ) : contextChips.map(chip => (
           <span
             key={chip.label}
-            className="text-xs px-2 py-0.5 rounded-full font-medium"
-            style={{background: chip.bg, color: chip.color}}
+            className="text-xs px-2.5 py-1 rounded-full font-bold shadow-sm"
+            style={{background: chip.bg, color: chip.color, border: `1px solid ${chip.bg}`}}
           >
             {chip.label}
           </span>
@@ -240,67 +243,83 @@ If asked about specific instances, refer to the real instance IDs from the conte
 
       {/* Chat area */}
       <div
-        className="flex-1 overflow-y-auto bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-4"
+        ref={chatContainerRef}
+        className="flex-1 overflow-y-auto auth-glass rounded-2xl p-6 mb-4 custom-scrollbar"
         style={{minHeight: 0}}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
           {messages.map((msg, i) => (
-            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+            <div key={i} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
               <div
-                className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium flex-shrink-0 mt-0.5"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 mt-1"
                 style={{
-                  background: msg.role === 'assistant' ? '#E1F5EE' : '#E6F1FB',
-                  color: msg.role === 'assistant' ? '#0F6E56' : '#185FA5'
+                  background: msg.role === 'assistant' ? 'rgba(16,185,129,0.15)' : 'rgba(59,130,246,0.15)',
+                  color: msg.role === 'assistant' ? '#34D399' : '#60A5FA',
+                  boxShadow: msg.role === 'assistant' ? '0 0 10px rgba(16,185,129,0.1)' : '0 0 10px rgba(59,130,246,0.1)'
                 }}
               >
-                {msg.role === 'assistant' ? '🤖' : 'RK'}
+                {msg.role === 'assistant' ? '🤖' : 'US'}
               </div>
-              <div className={`flex flex-col gap-1 max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div className={`flex flex-col gap-1 max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                 <div
-                  className="text-xs leading-relaxed px-4 py-3 rounded-2xl"
+                  className="text-sm leading-relaxed px-5 py-3.5 rounded-2xl shadow-lg"
                   style={{
-                    background: msg.role === 'user' ? '#0F6E56' : '#f9fafb',
-                    color: msg.role === 'user' ? '#fff' : '#374151',
-                    borderBottomRightRadius: msg.role === 'user' ? 4 : undefined,
-                    borderBottomLeftRadius: msg.role === 'assistant' ? 4 : undefined,
+                    background: msg.role === 'user' ? 'linear-gradient(135deg, #0F6E56, #094d3c)' : 'rgba(255,255,255,0.03)',
+                    color: msg.role === 'user' ? '#fff' : 'rgba(255,255,255,0.9)',
+                    border: msg.role === 'user' ? 'none' : '1px solid rgba(255,255,255,0.05)',
+                    borderBottomRightRadius: msg.role === 'user' ? 4 : 16,
+                    borderBottomLeftRadius: msg.role === 'assistant' ? 4 : 16,
                   }}
                   dangerouslySetInnerHTML={{__html: formatMessage(msg.content)}}
                 />
-                <span className="text-xs text-gray-300">{msg.timestamp}</span>
+                <span className="text-xs mt-1" style={{color: 'rgba(255,255,255,0.3)'}}>{msg.timestamp}</span>
               </div>
             </div>
           ))}
 
           {loading && (
-            <div className="flex gap-3">
+            <div className="flex gap-4">
               <div
-                className="w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0"
-                style={{background: '#E1F5EE'}}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0 mt-1"
+                style={{background: 'rgba(16,185,129,0.15)', color: '#34D399'}}
               >
                 🤖
               </div>
-              <div className="px-4 py-3 rounded-2xl bg-gray-50" style={{borderBottomLeftRadius: 4}}>
-                <div className="flex gap-1 items-center">
-                  <div className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{animationDelay: '0ms'}}></div>
-                  <div className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{animationDelay: '150ms'}}></div>
-                  <div className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{animationDelay: '300ms'}}></div>
+              <div className="px-5 py-4 rounded-2xl" style={{background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderBottomLeftRadius: 4}}>
+                <div className="flex gap-1.5 items-center">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{animationDelay: '0ms'}}></div>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{animationDelay: '150ms'}}></div>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{animationDelay: '300ms'}}></div>
                 </div>
               </div>
             </div>
           )}
-
-          <div ref={bottomRef}/>
         </div>
       </div>
 
       {/* Suggested questions */}
       {messages.length <= 1 && !contextLoading && (
-        <div className="flex flex-wrap gap-2 mb-3 flex-shrink-0">
+        <div className="flex flex-wrap gap-2 mb-4 flex-shrink-0">
           {suggestedQuestions.map(q => (
             <button
               key={q}
               onClick={() => handleSendWithText(q)}
-              className="text-xs px-3 py-1.5 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:border-emerald-300 hover:text-emerald-700 transition-all"
+              className="text-xs px-4 py-2 rounded-full transition-all"
+              style={{
+                background: 'rgba(255,255,255,0.02)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: 'rgba(255,255,255,0.6)'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.borderColor = 'rgba(52,211,153,0.5)'
+                e.currentTarget.style.color = '#34D399'
+                e.currentTarget.style.background = 'rgba(52,211,153,0.05)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                e.currentTarget.style.color = 'rgba(255,255,255,0.6)'
+                e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
+              }}
             >
               {q}
             </button>
@@ -309,7 +328,7 @@ If asked about specific instances, refer to the real instance IDs from the conte
       )}
 
       {/* Input */}
-      <div className="flex gap-2 flex-shrink-0">
+      <div className="flex gap-3 flex-shrink-0">
         <input
           ref={inputRef}
           type="text"
@@ -318,13 +337,20 @@ If asked about specific instances, refer to the real instance IDs from the conte
           onKeyDown={e => e.key === 'Enter' && handleSend()}
           placeholder={contextLoading ? 'Loading account data...' : 'Ask anything about your AWS infrastructure...'}
           disabled={contextLoading}
-          className="flex-1 text-xs px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-colors disabled:opacity-50"
+          className="flex-1 text-sm px-5 py-4 border rounded-xl focus:outline-none transition-colors disabled:opacity-50"
+          style={{
+            background: 'rgba(255,255,255,0.02)',
+            borderColor: 'rgba(255,255,255,0.1)',
+            color: '#fff'
+          }}
+          onFocus={e => e.currentTarget.style.borderColor = '#0F6E56'}
+          onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'}
         />
         <button
           onClick={handleSend}
           disabled={loading || !input.trim() || contextLoading}
-          className="px-4 py-3 rounded-xl text-white text-xs font-medium transition-all disabled:opacity-40"
-          style={{background: '#0F6E56'}}
+          className="px-6 py-4 rounded-xl text-white text-sm font-bold transition-all disabled:opacity-40"
+          style={{background: 'linear-gradient(135deg, #0F6E56 0%, #185FA5 100%)', boxShadow: '0 4px 15px rgba(15,110,86,0.3)'}}
         >
           Send →
         </button>

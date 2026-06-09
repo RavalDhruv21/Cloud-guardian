@@ -45,117 +45,124 @@ export default function CostOptimizerPage() {
   }, 0)
 
   const severityColor = (s: string) =>
-    s === 'high' ? '#A32D2D' : s === 'medium' ? '#854F0B' : '#185FA5'
+    s === 'high' ? '#F87171' : s === 'medium' ? '#FBBF24' : '#60A5FA'
+
+  const severityBg = (s: string) =>
+    s === 'high' ? 'rgba(248,113,113,0.15)' : s === 'medium' ? 'rgba(251,191,36,0.15)' : 'rgba(96,165,250,0.15)'
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64 animate-entrance">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin"/>
-          <div className="text-xs text-gray-400">Scanning for cost savings...</div>
+          <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" style={{boxShadow: '0 0 15px rgba(16,185,129,0.2)'}}/>
+          <div className="text-xs text-white/50">Scanning for cost savings...</div>
         </div>
       </div>
     )
   }
 
   return (
-    <div>
+    <div className="animate-entrance w-full">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">Cost optimizer</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Weekly scan · finds idle and wasted resources</p>
+          <h1 className="text-lg font-semibold text-white">Cost optimizer</h1>
+          <p className="text-xs text-white/50 mt-0.5">Weekly scan · finds idle and wasted resources</p>
         </div>
       </div>
 
       {/* Savings banner */}
-      <div className="rounded-xl p-5 mb-6 border" style={{background: 'linear-gradient(135deg, #f0f9f4, #e8f5f0)', borderColor: '#a7f3d0'}}>
+      <div className="rounded-2xl p-6 mb-8 border transition-all" style={{background: 'linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(5,11,24,0.4) 100%)', borderColor: 'rgba(16,185,129,0.2)', boxShadow: '0 4px 20px rgba(16,185,129,0.05)'}}>
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-xs font-medium mb-1" style={{color: '#0F6E56'}}>Total potential savings</div>
-            <div className="text-3xl font-bold" style={{color: '#0F6E56'}}>
-              ${totalSavings.toFixed(2)}<span className="text-sm font-normal">/month</span>
+            <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{color: '#34D399'}}>Total potential savings</div>
+            <div className="text-4xl font-bold" style={{color: '#34D399', textShadow: '0 0 20px rgba(52,211,153,0.3)'}}>
+              ${totalSavings.toFixed(2)}<span className="text-base font-normal text-emerald-500/60 ml-1">/month</span>
             </div>
-            <div className="text-xs mt-1" style={{color: '#0F6E56'}}>{active.length} resources identified</div>
+            <div className="text-xs mt-2" style={{color: 'rgba(52,211,153,0.6)'}}>{active.length} resources identified</div>
           </div>
-          <div className="text-5xl">💰</div>
+          <div className="text-6xl opacity-80" style={{textShadow: '0 0 30px rgba(52,211,153,0.3)'}}>💰</div>
         </div>
       </div>
 
       {active.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center">
-          <div className="text-4xl mb-3">✅</div>
-          <div className="text-sm font-medium text-gray-700 mb-1">
+        <div className="auth-glass rounded-2xl p-12 text-center">
+          <div className="text-4xl mb-4 opacity-80" style={{textShadow: '0 0 20px rgba(52,211,153,0.3)'}}>✅</div>
+          <div className="text-sm font-semibold text-white mb-2">
             {suggestions.length === 0 ? 'No cost issues found' : 'All suggestions resolved'}
           </div>
-          <div className="text-xs text-gray-400">
+          <div className="text-xs text-white/50">
             {suggestions.length === 0
               ? 'Your AWS resources look well optimized. Next scan runs Sunday at 9am.'
               : 'Great work! Next scan runs Sunday at 9am.'}
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
           {active.map((item, i) => (
             <div
               key={i}
-              className="bg-white rounded-xl border shadow-sm p-5"
+              className="auth-glass rounded-2xl p-5 transition-all hover:scale-[1.01]"
               style={{
                 borderLeft: `3px solid ${severityColor(item.severity)}`,
-                borderTop: '1px solid #f3f4f6',
-                borderRight: '1px solid #f3f4f6',
-                borderBottom: '1px solid #f3f4f6',
+                animationDelay: `${i * 0.05}s`
               }}
             >
-              <div className="flex items-start gap-4">
+              <div className="flex items-start gap-5">
                 <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-xs font-bold"
+                  className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 text-sm font-bold shadow-lg"
                   style={{
-                    background: item.resource_type === 'EC2' ? '#FCEBEB' : item.resource_type === 'RDS' ? '#FAEEDA' : '#E6F1FB',
-                    color: item.resource_type === 'EC2' ? '#A32D2D' : item.resource_type === 'RDS' ? '#854F0B' : '#185FA5'
+                    background: item.resource_type === 'EC2' ? 'rgba(248,113,113,0.15)' : item.resource_type === 'RDS' ? 'rgba(251,191,36,0.15)' : 'rgba(96,165,250,0.15)',
+                    color: item.resource_type === 'EC2' ? '#F87171' : item.resource_type === 'RDS' ? '#FBBF24' : '#60A5FA',
+                    border: `1px solid ${item.resource_type === 'EC2' ? 'rgba(248,113,113,0.3)' : item.resource_type === 'RDS' ? 'rgba(251,191,36,0.3)' : 'rgba(96,165,250,0.3)'}`
                   }}
                 >
                   {item.resource_type || 'AWS'}
                 </div>
                 <div className="flex-1">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-sm font-medium text-gray-900">{item.issue}</div>
-                    <div className="text-lg font-bold" style={{color: '#0F6E56'}}>{item.estimated_saving}</div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="text-base font-semibold text-white">{item.issue}</div>
+                    <div className="text-xl font-bold" style={{color: '#34D399', textShadow: '0 0 10px rgba(52,211,153,0.2)'}}>{item.estimated_saving}</div>
                   </div>
-                  <div className="text-xs text-gray-400 mb-1">{item.resource_id}</div>
-                  <div className="text-xs text-gray-600 mb-4 leading-relaxed">{item.recommendation}</div>
+                  <div className="text-xs text-white/40 mb-3 font-mono">{item.resource_id}</div>
+                  
+                  <div className="rounded-xl p-4 mb-4" style={{background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)'}}>
+                    <div className="text-sm text-white/80 leading-relaxed">{item.recommendation}</div>
+                  </div>
 
                   {confirming === item.resource_id ? (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
-                      <div className="text-xs font-medium text-red-700 mb-2">⚠️ Confirm action?</div>
-                      <div className="text-xs text-red-600 mb-3">This will stop/remove the resource. Data is preserved.</div>
-                      <div className="flex gap-2">
+                    <div className="rounded-xl p-4 mb-3 border" style={{background: 'rgba(248,113,113,0.05)', borderColor: 'rgba(248,113,113,0.2)'}}>
+                      <div className="text-xs font-semibold text-red-400 mb-2 uppercase tracking-wider">⚠️ Confirm action?</div>
+                      <div className="text-sm text-red-300/80 mb-4">This will stop/remove the resource. Data is preserved.</div>
+                      <div className="flex gap-3">
                         <button
                           onClick={() => handleStop(item.resource_id)}
-                          className="text-xs px-3 py-1.5 rounded-lg text-white"
-                          style={{background: '#A32D2D'}}
+                          className="text-xs font-bold px-4 py-2 rounded-lg text-white shadow-lg transition-all hover:scale-105"
+                          style={{background: 'linear-gradient(135deg, #EF4444, #B91C1C)'}}
                         >
                           Yes, proceed
                         </button>
                         <button
                           onClick={() => setConfirming(null)}
-                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600"
+                          className="text-xs font-medium px-4 py-2 rounded-lg border transition-colors hover:bg-white/5"
+                          style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'}}
                         >
                           Cancel
                         </button>
                       </div>
                     </div>
                   ) : (
-                    <div className="flex gap-2">
+                    <div className="flex gap-3">
                       <button
                         onClick={() => setConfirming(item.resource_id)}
-                        className="text-xs px-3 py-1.5 rounded-lg text-white"
-                        style={{background: '#0F6E56'}}
+                        className="text-xs font-bold px-5 py-2.5 rounded-lg text-white shadow-lg transition-all hover:scale-105"
+                        style={{background: 'linear-gradient(135deg, #0F6E56, #094d3c)', boxShadow: '0 4px 15px rgba(15,110,86,0.3)'}}
                       >
                         Take action
                       </button>
                       <button
                         onClick={() => handleDismiss(item.resource_id)}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                        className="text-xs font-medium px-5 py-2.5 rounded-lg border transition-colors hover:bg-white/5"
+                        style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'}}
                       >
                         Dismiss
                       </button>

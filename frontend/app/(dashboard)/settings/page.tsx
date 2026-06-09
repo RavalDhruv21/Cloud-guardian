@@ -1,7 +1,5 @@
 'use client'
-
 import { useState, useEffect } from 'react'
-import { User, Bell, Shield, Cloud, Save, Check, Eye, EyeOff, AlertCircle } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
@@ -39,7 +37,6 @@ const defaultProfile: UserProfile = {
 
 const STORAGE_KEY = 'cg_user_profile'
 
-// Save to localStorage so dashboard + topbar can read it
 export const getUserProfile = (): UserProfile => {
   if (typeof window === 'undefined') return defaultProfile
   try {
@@ -54,6 +51,97 @@ export const saveUserProfile = (profile: UserProfile) => {
   window.dispatchEvent(new Event('profile-updated'))
 }
 
+const Toggle = ({ value, onChange }: { value: boolean, onChange: () => void }) => (
+  <button
+    onClick={onChange}
+    style={{
+      width: 40, height: 22, borderRadius: 11, border: 'none',
+      background: value ? '#34D399' : 'rgba(255,255,255,0.1)',
+      position: 'relative', cursor: 'pointer',
+      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)', flexShrink: 0,
+      boxShadow: value ? '0 0 10px rgba(52,211,153,0.3)' : 'none'
+    }}
+  >
+    <div style={{
+      position: 'absolute', top: 3,
+      left: value ? 21 : 3,
+      width: 16, height: 16, borderRadius: '50%',
+      background: value ? '#050B18' : '#fff', transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+    }}/>
+  </button>
+)
+
+const Input = ({ label, value, onChange, placeholder, type = 'text', hint }: any) => (
+  <div>
+    <label style={{fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(255,255,255,0.5)', display: 'block', marginBottom: 8}}>
+      {label}
+    </label>
+    <input
+      type={type}
+      value={value || ''}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{
+        width: '100%', padding: '10px 14px', border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '10px', fontSize: 13, outline: 'none',
+        background: 'rgba(255,255,255,0.02)', color: '#fff', boxSizing: 'border-box',
+        transition: 'border-color 0.2s'
+      }}
+      onFocus={e => e.target.style.borderColor = '#0F6E56'}
+      onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+    />
+    {hint && <div style={{fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 6}}>{hint}</div>}
+  </div>
+)
+
+const Select = ({ label, value, onChange, options }: any) => (
+  <div>
+    <label style={{fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(255,255,255,0.5)', display: 'block', marginBottom: 8}}>
+      {label}
+    </label>
+    <select
+      value={value || ''}
+      onChange={e => onChange(e.target.value)}
+      style={{
+        width: '100%', padding: '10px 14px', border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '10px', fontSize: 13, outline: 'none',
+        background: 'rgba(255,255,255,0.02)', color: '#fff', boxSizing: 'border-box' as const,
+        appearance: 'none', transition: 'border-color 0.2s'
+      }}
+      onFocus={e => e.target.style.borderColor = '#0F6E56'}
+      onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+    >
+      {options.map((o: any) => (
+        <option key={o.value} value={o.value} style={{background: '#050B18', color: '#fff'}}>{o.label || o.value}</option>
+      ))}
+    </select>
+  </div>
+)
+
+const SectionTitle = ({ children }: { children: string }) => (
+  <div style={{
+    fontSize: 14, fontWeight: 600, color: '#fff',
+    marginBottom: 20, paddingBottom: 12,
+    borderBottom: '1px solid rgba(255,255,255,0.05)'
+  }}>
+    {children}
+  </div>
+)
+
+const ToggleRow = ({ label, desc, value, onChange }: any) => (
+  <div style={{
+    display: 'flex', justifyContent: 'space-between',
+    alignItems: 'center', padding: '14px 0',
+    borderBottom: '1px solid rgba(255,255,255,0.02)'
+  }}>
+    <div>
+      <div style={{fontSize: 13, fontWeight: 600, color: '#fff'}}>{label}</div>
+      <div style={{fontSize: 12, color: 'rgba(255,255,255,0.5)', mt: 4}}>{desc}</div>
+    </div>
+    <Toggle value={value} onChange={onChange}/>
+  </div>
+)
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'profile' | 'notifications' | 'security' | 'aws'>('profile')
   const [profile, setProfile] = useState<UserProfile>(defaultProfile)
@@ -61,37 +149,15 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   const [showWebhook, setShowWebhook] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [currentRegion, setCurrentRegion] = useState('us-east-1')
 
   useEffect(() => {
-    loadProfile()
-  }, [])
-
-  const loadProfile = async () => {
-    setLoading(true)
-
-    // First load from localStorage instantly
     const local = getUserProfile()
     if (local.name) setProfile(local)
-
-    // Then try to fetch from API
-    try {
-      const token = localStorage.getItem('cg_token') || ''
-      const res = await fetch(`${API_URL}/user/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        const data = await res.json()
-        const merged = { ...defaultProfile, ...data.profile }
-        setProfile(merged)
-        saveUserProfile(merged) // sync to localStorage
-      }
-    } catch {
-      // keep localStorage version
-    } finally {
-      setLoading(false)
+    if (typeof window !== 'undefined') {
+      setCurrentRegion(localStorage.getItem('selected_region') || 'us-east-1')
     }
-  }
+  }, [])
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -101,281 +167,441 @@ export default function SettingsPage() {
   const handleSave = async () => {
     if (!profile.name.trim()) return showToast('Name is required')
     setSaving(true)
-
-    // Update initials
     const initials = profile.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
-    const updatedProfile = { ...profile, avatar_initials: initials }
-    setProfile(updatedProfile)
-
-    // Save to localStorage immediately (so topbar & dashboard update)
-    saveUserProfile(updatedProfile)
-
-    // Try to save to API
-    try {
-      const token = localStorage.getItem('cg_token') || ''
-      await fetch(`${API_URL}/user/profile`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(updatedProfile),
-      })
-    } catch {}
-
+    const updated = { ...profile, avatar_initials: initials }
+    setProfile(updated)
+    saveUserProfile(updated)
     setSaving(false)
     setSaved(true)
     showToast('Settings saved!')
     setTimeout(() => setSaved(false), 3000)
   }
 
+  const handleDisconnect = () => {
+    const updated = { ...profile, aws_account_id: '', aws_role_arn: '' }
+    setProfile(updated)
+    saveUserProfile(updated)
+    showToast('Account disconnected')
+  }
+
+  const isConnected = !!(profile.aws_account_id || profile.aws_role_arn)
+
   const tabs = [
-    { id: 'profile', label: 'Profile', icon: <User size={15} /> },
-    { id: 'notifications', label: 'Notifications', icon: <Bell size={15} /> },
-    { id: 'security', label: 'Security', icon: <Shield size={15} /> },
-    { id: 'aws', label: 'AWS Config', icon: <Cloud size={15} /> },
+    { id: 'profile', label: 'Profile', icon: '👤' },
+    { id: 'notifications', label: 'Notifications', icon: '🔔' },
+    { id: 'security', label: 'Security', icon: '🛡️' },
+    { id: 'aws', label: 'AWS Config', icon: '☁️' },
   ]
 
-  const inputStyle = {
-    width: '100%', padding: '9px 12px', border: '1px solid #d1d5db',
-    borderRadius: 8, fontSize: 13, outline: 'none', boxSizing: 'border-box' as const,
-    background: '#fff', color: '#111'
-  }
-  const labelStyle = { fontSize: 12, fontWeight: 600, color: '#374151', display: 'block' as const, marginBottom: 6 }
-
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 820, margin: '0 auto' }}>
-
+    <div className="animate-entrance w-full">
       {/* Toast */}
       {toast && (
         <div style={{
-          position: 'fixed', top: 20, right: 24, zIndex: 999,
-          background: '#0F6E56', color: '#fff', padding: '10px 18px',
-          borderRadius: 10, fontSize: 13, fontWeight: 500,
-          boxShadow: '0 4px 20px rgba(0,0,0,0.15)'
-        }}>{toast}</div>
+          position: 'fixed', bottom: 30, right: 30, zIndex: 999,
+          background: 'rgba(16,185,129,0.95)', color: '#fff', padding: '12px 24px',
+          borderRadius: '12px', fontSize: 13, fontWeight: 600,
+          boxShadow: '0 10px 30px rgba(16,185,129,0.3)', backdropFilter: 'blur(10px)',
+          animation: 'entrance 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
+        }}>
+          {toast}
+        </div>
       )}
 
-      {/* Header */}
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111', marginBottom: 4 }}>Settings</h1>
-        <p style={{ fontSize: 13, color: '#6b7280' }}>Manage your profile, notifications, and AWS configuration.</p>
+      {/* Page header */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-lg font-semibold text-white">Settings</h1>
+          <p className="text-xs text-white/50 mt-0.5">
+            Manage your profile, notifications and AWS configuration
+          </p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="text-xs px-6 py-2.5 rounded-lg text-white font-bold transition-all disabled:opacity-50 hover:scale-105"
+          style={{
+            background: saved ? 'rgba(52,211,153,0.2)' : 'linear-gradient(135deg, #0F6E56, #094d3c)',
+            color: saved ? '#34D399' : '#fff',
+            border: saved ? '1px solid rgba(52,211,153,0.3)' : 'none',
+            boxShadow: saved ? '0 0 15px rgba(52,211,153,0.1)' : '0 4px 15px rgba(15,110,86,0.3)',
+            cursor: 'pointer'
+          }}
+        >
+          {saved ? '✓ Saved' : saving ? 'Saving...' : 'Save changes'}
+        </button>
       </div>
 
-      {/* Profile Preview Card */}
-      <div style={{
-        background: 'linear-gradient(135deg, #0F6E56 0%, #185FA5 100%)',
-        borderRadius: 16, padding: '24px 28px', marginBottom: 28, color: '#fff',
-        display: 'flex', alignItems: 'center', gap: 20
-      }}>
-        <div style={{
-          width: 56, height: 56, borderRadius: '50%',
-          background: 'rgba(255,255,255,0.25)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center',
-          fontSize: 20, fontWeight: 800, flexShrink: 0
-        }}>
+      {/* Profile preview card */}
+      <div
+        className="rounded-2xl p-6 mb-8 flex items-center gap-5 shadow-lg border transition-all"
+        style={{
+          background: 'linear-gradient(135deg, rgba(15,110,86,0.2) 0%, rgba(24,95,165,0.2) 100%)',
+          borderColor: 'rgba(15,110,86,0.3)',
+        }}
+      >
+        <div
+          className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-bold flex-shrink-0"
+          style={{background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)'}}
+        >
           {profile.avatar_initials || (profile.name ? profile.name[0].toUpperCase() : '?')}
         </div>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>{profile.name || 'Your Name'}</div>
-          <div style={{ fontSize: 13, opacity: 0.8 }}>{profile.email || 'your@email.com'}</div>
-          <div style={{ fontSize: 12, opacity: 0.65, marginTop: 2 }}>{profile.company || 'Company'} · {profile.role || 'Role'}</div>
+          <div className="text-lg font-semibold text-white">
+            {profile.name || 'Your Name'}
+          </div>
+          <div className="text-sm mt-1 font-mono" style={{color: 'rgba(255,255,255,0.6)'}}>
+            {profile.email || 'your@email.com'}
+          </div>
+          <div className="text-xs mt-1.5 font-medium uppercase tracking-wider" style={{color: 'rgba(255,255,255,0.4)'}}>
+            {[profile.company, profile.role, profile.timezone].filter(Boolean).join(' • ') || 'Complete your profile'}
+          </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 24 }}>
-        {/* Sidebar Tabs */}
-        <div style={{ width: 180, flexShrink: 0 }}>
-          {tabs.map(tab => (
-            <div key={tab.id}
-              onClick={() => setActiveTab(tab.id as typeof activeTab)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: '10px 14px', borderRadius: 10, cursor: 'pointer',
-                marginBottom: 4, fontSize: 13, fontWeight: 500,
-                background: activeTab === tab.id ? '#f0fdf4' : 'transparent',
-                color: activeTab === tab.id ? '#0F6E56' : '#6b7280',
-                border: activeTab === tab.id ? '1px solid #bbf7d0' : '1px solid transparent',
-                transition: 'all 0.15s'
-              }}>
-              {tab.icon} {tab.label}
-            </div>
-          ))}
+      <div className="flex gap-6">
+
+        {/* Tab sidebar */}
+        <div className="flex-shrink-0 w-48">
+          <div className="flex flex-col gap-1.5 p-2 rounded-2xl auth-glass">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-xs font-semibold transition-all"
+                style={{
+                  background: activeTab === tab.id ? 'rgba(255,255,255,0.05)' : 'transparent',
+                  color: activeTab === tab.id ? '#34D399' : 'rgba(255,255,255,0.6)',
+                  border: '1px solid transparent',
+                  cursor: 'pointer', textAlign: 'left',
+                  textShadow: activeTab === tab.id ? '0 0 10px rgba(52,211,153,0.3)' : 'none'
+                }}
+              >
+                <span className={activeTab === tab.id ? 'opacity-100' : 'opacity-50'}>{tab.icon}</span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Tab Content */}
-        <div style={{ flex: 1, background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: 24 }}>
+        {/* Tab content */}
+        <div className="flex-1 auth-glass rounded-2xl p-8">
 
-          {/* PROFILE TAB */}
-          {activeTab === 'profile' && (
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: '#111' }}>Personal Information</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <label style={labelStyle}>Full Name *</label>
-                  <input style={inputStyle} value={profile.name} onChange={e => setProfile(p => ({ ...p, name: e.target.value }))} placeholder="Ravi Sharma" />
-                </div>
-                <div>
-                  <label style={labelStyle}>Email Address</label>
-                  <input style={inputStyle} type="email" value={profile.email} onChange={e => setProfile(p => ({ ...p, email: e.target.value }))} placeholder="ravi@example.com" />
-                </div>
-                <div>
-                  <label style={labelStyle}>Company / Organization</label>
-                  <input style={inputStyle} value={profile.company} onChange={e => setProfile(p => ({ ...p, company: e.target.value }))} placeholder="Acme Corp" />
-                </div>
-                <div>
-                  <label style={labelStyle}>Role / Job Title</label>
-                  <input style={inputStyle} value={profile.role} onChange={e => setProfile(p => ({ ...p, role: e.target.value }))} placeholder="Cloud Engineer" />
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <label style={labelStyle}>Timezone</label>
-                  <select style={inputStyle} value={profile.timezone} onChange={e => setProfile(p => ({ ...p, timezone: e.target.value }))}>
-                    <option value="Asia/Kolkata">India (IST) — UTC+5:30</option>
-                    <option value="America/New_York">US Eastern — UTC-5</option>
-                    <option value="America/Los_Angeles">US Pacific — UTC-8</option>
-                    <option value="Europe/London">London (GMT)</option>
-                    <option value="Asia/Singapore">Singapore — UTC+8</option>
-                    <option value="UTC">UTC</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* NOTIFICATIONS TAB */}
-          {activeTab === 'notifications' && (
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: '#111' }}>Notification Channels</h3>
-
-              <div style={{ marginBottom: 20 }}>
-                <label style={labelStyle}>Notification Email</label>
-                <input style={inputStyle} type="email" value={profile.notification_email} onChange={e => setProfile(p => ({ ...p, notification_email: e.target.value }))} placeholder="alerts@example.com" />
-                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Anomaly alerts and weekly reports will be sent here.</div>
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <label style={labelStyle}>Slack Webhook URL</label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    style={{ ...inputStyle, paddingRight: 36 }}
-                    type={showWebhook ? 'text' : 'password'}
-                    value={profile.slack_webhook}
-                    onChange={e => setProfile(p => ({ ...p, slack_webhook: e.target.value }))}
-                    placeholder="https://hooks.slack.com/services/..."
+            {/* PROFILE TAB */}
+            {activeTab === 'profile' && (
+              <div className="animate-entrance">
+                <SectionTitle>Personal information</SectionTitle>
+                <div className="grid grid-cols-2 gap-6 mt-6">
+                  <Input
+                    label="Full name *"
+                    value={profile.name}
+                    onChange={(v: string) => setProfile(p => ({...p, name: v}))}
+                    placeholder="Ravi Sharma"
                   />
-                  <div onClick={() => setShowWebhook(!showWebhook)} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: '#9ca3af' }}>
-                    {showWebhook ? <EyeOff size={14} /> : <Eye size={14} />}
+                  <Input
+                    label="Email address"
+                    type="email"
+                    value={profile.email}
+                    onChange={(v: string) => setProfile(p => ({...p, email: v}))}
+                    placeholder="ravi@example.com"
+                  />
+                  <Input
+                    label="Company / Organization"
+                    value={profile.company}
+                    onChange={(v: string) => setProfile(p => ({...p, company: v}))}
+                    placeholder="Acme Corp"
+                  />
+                  <Input
+                    label="Role / Job title"
+                    value={profile.role}
+                    onChange={(v: string) => setProfile(p => ({...p, role: v}))}
+                    placeholder="Cloud Engineer"
+                  />
+                  <div className="col-span-2">
+                    <Select
+                      label="Timezone"
+                      value={profile.timezone}
+                      onChange={(v: string) => setProfile(p => ({...p, timezone: v}))}
+                      options={[
+                        {value: 'Asia/Kolkata', label: 'India (IST) — UTC+5:30'},
+                        {value: 'America/New_York', label: 'US Eastern — UTC-5'},
+                        {value: 'America/Los_Angeles', label: 'US Pacific — UTC-8'},
+                        {value: 'Europe/London', label: 'London (GMT)'},
+                        {value: 'Asia/Singapore', label: 'Singapore — UTC+8'},
+                        {value: 'UTC', label: 'UTC'},
+                      ]}
+                    />
                   </div>
                 </div>
               </div>
+            )}
 
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 12 }}>Alert Channels</div>
-                {[
-                  { key: 'alert_email', label: 'Email alerts', desc: 'Receive anomaly and security alerts by email' },
-                  { key: 'alert_slack', label: 'Slack alerts', desc: 'Receive alerts in your Slack workspace' },
-                ].map(item => (
-                  <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f4f6' }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: '#111' }}>{item.label}</div>
-                      <div style={{ fontSize: 12, color: '#9ca3af' }}>{item.desc}</div>
-                    </div>
-                    <div
-                      onClick={() => setProfile(p => ({ ...p, [item.key]: !p[item.key as keyof UserProfile] }))}
-                      style={{
-                        width: 40, height: 23, borderRadius: 12, cursor: 'pointer',
-                        background: profile[item.key as keyof UserProfile] ? '#0F6E56' : '#d1d5db',
-                        position: 'relative', transition: 'background 0.2s', flexShrink: 0
-                      }}>
-                      <div style={{
-                        position: 'absolute', top: 3,
-                        left: profile[item.key as keyof UserProfile] ? 19 : 3,
-                        width: 17, height: 17, borderRadius: '50%', background: '#fff',
-                        transition: 'left 0.2s'
-                      }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* SECURITY TAB */}
-          {activeTab === 'security' && (
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: '#111' }}>Security Settings</h3>
-
-              <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '12px 16px', marginBottom: 20, display: 'flex', gap: 10 }}>
-                <AlertCircle size={16} color="#d97706" style={{ flexShrink: 0, marginTop: 1 }} />
-                <div style={{ fontSize: 12, color: '#92400e' }}>
-                  Password changes are handled via <strong>AWS Cognito</strong>. Use the Cognito user pool console or the forgot password flow on the login page.
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 4 }}>Active Session</div>
-                <div style={{ background: '#f9fafb', borderRadius: 8, padding: '12px 14px', fontSize: 12, color: '#6b7280' }}>
-                  <div>Logged in via AWS Cognito</div>
-                  <div style={{ marginTop: 4 }}>Region: {profile.aws_region || 'us-east-1'}</div>
-                  <div style={{ marginTop: 4 }}>Account: {profile.aws_account_id || '—'}</div>
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 12 }}>Data & Privacy</div>
-                {[
-                  { label: 'Anonymize metrics in reports', desc: 'Replace instance IDs with generic labels in AI reports' },
-                  { label: 'Share usage analytics', desc: 'Help improve Cloud Guardian (anonymous data only)' },
-                ].map(item => (
-                  <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f4f6' }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: '#111' }}>{item.label}</div>
-                      <div style={{ fontSize: 12, color: '#9ca3af' }}>{item.desc}</div>
-                    </div>
-                    <div style={{ width: 40, height: 23, borderRadius: 12, background: '#d1d5db', position: 'relative', cursor: 'pointer', flexShrink: 0 }}>
-                      <div style={{ position: 'absolute', top: 3, left: 3, width: 17, height: 17, borderRadius: '50%', background: '#fff' }} />
+            {/* NOTIFICATIONS TAB */}
+            {activeTab === 'notifications' && (
+              <div className="animate-entrance">
+                <SectionTitle>Notification channels</SectionTitle>
+                <div className="flex flex-col gap-6 mt-6 mb-8">
+                  <Input
+                    label="Notification email"
+                    type="email"
+                    value={profile.notification_email}
+                    onChange={(v: string) => setProfile(p => ({...p, notification_email: v}))}
+                    placeholder="alerts@example.com"
+                    hint="Anomaly alerts and weekly reports will be sent here"
+                  />
+                  <div>
+                    <label style={{fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'rgba(255,255,255,0.5)', display: 'block', marginBottom: 8}}>
+                      Slack webhook URL
+                    </label>
+                    <div style={{position: 'relative'}}>
+                      <input
+                        type={showWebhook ? 'text' : 'password'}
+                        value={profile.slack_webhook}
+                        onChange={e => setProfile(p => ({...p, slack_webhook: e.target.value}))}
+                        placeholder="https://hooks.slack.com/services/..."
+                        style={{
+                          width: '100%', padding: '10px 40px 10px 14px',
+                          border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px',
+                          fontSize: 13, outline: 'none', boxSizing: 'border-box' as const,
+                          background: 'rgba(255,255,255,0.02)', color: '#fff',
+                          transition: 'border-color 0.2s'
+                        }}
+                        onFocus={e => e.target.style.borderColor = '#0F6E56'}
+                        onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+                      />
+                      <button
+                        onClick={() => setShowWebhook(!showWebhook)}
+                        style={{
+                          position: 'absolute', right: 12,
+                          top: '50%', transform: 'translateY(-50%)',
+                          background: 'none', border: 'none',
+                          cursor: 'pointer', fontSize: 14, opacity: 0.6
+                        }}
+                      >
+                        {showWebhook ? '🙈' : '👁'}
+                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                </div>
 
-          {/* AWS CONFIG TAB */}
-          {activeTab === 'aws' && (
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, color: '#111' }}>AWS Configuration</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div>
-                  <label style={labelStyle}>AWS Account ID</label>
-                  <input style={inputStyle} value={profile.aws_account_id} onChange={e => setProfile(p => ({ ...p, aws_account_id: e.target.value }))} placeholder="123456789012" />
+                <SectionTitle>Alert preferences</SectionTitle>
+                <div className="mt-4">
+                  <ToggleRow
+                    label="Email alerts"
+                    desc="Receive anomaly and security alerts by email"
+                    value={profile.alert_email}
+                    onChange={() => setProfile(p => ({...p, alert_email: !p.alert_email}))}
+                  />
+                  <ToggleRow
+                    label="Slack alerts"
+                    desc="Receive alerts in your Slack workspace"
+                    value={profile.alert_slack}
+                    onChange={() => setProfile(p => ({...p, alert_slack: !p.alert_slack}))}
+                  />
                 </div>
-                <div>
-                  <label style={labelStyle}>Cross-Account IAM Role ARN</label>
-                  <input style={inputStyle} value={profile.aws_role_arn} onChange={e => setProfile(p => ({ ...p, aws_role_arn: e.target.value }))} placeholder="arn:aws:iam::123456789012:role/CloudGuardianRole" />
-                  <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>This role allows Cloud Guardian to read metrics from your account.</div>
+              </div>
+            )}
+
+            {/* SECURITY TAB */}
+            {activeTab === 'security' && (
+              <div className="animate-entrance">
+                <SectionTitle>Security settings</SectionTitle>
+
+                <div
+                  className="rounded-xl p-5 mt-6 mb-6 text-sm leading-relaxed"
+                  style={{background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.2)', color: '#FBBF24'}}
+                >
+                  ⚠️ Password changes are handled via <strong>AWS Cognito</strong>. Use the Cognito user pool console or the forgot password flow on the login page.
                 </div>
-                <div>
-                  <label style={labelStyle}>Default AWS Region</label>
-                  <select style={inputStyle} value={profile.aws_region} onChange={e => setProfile(p => ({ ...p, aws_region: e.target.value }))}>
-                    {['us-east-1','us-east-2','us-west-1','us-west-2','ap-south-1','ap-southeast-1','ap-northeast-1','eu-west-1','eu-central-1'].map(r => (
-                      <option key={r} value={r}>{r}</option>
+
+                <div className="rounded-xl p-5 mb-8" style={{background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)'}}>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-4">Active session</div>
+                  <div className="grid grid-cols-2 gap-5">
+                    {[
+                      {label: 'Auth provider', value: 'AWS Cognito'},
+                      {label: 'Region', value: profile.aws_region || 'us-east-1'},
+                      {label: 'Account ID', value: profile.aws_account_id || '—'},
+                      {label: 'Plan', value: 'Pro · Beta'},
+                    ].map(item => (
+                      <div key={item.label}>
+                        <div className="text-xs text-white/40 mb-1">{item.label}</div>
+                        <div className="text-sm font-semibold text-white/90">{item.value}</div>
+                      </div>
                     ))}
-                  </select>
+                  </div>
+                </div>
+
+                <SectionTitle>Data & privacy</SectionTitle>
+                <div className="mt-4">
+                  <ToggleRow
+                    label="Anonymize metrics in reports"
+                    desc="Replace instance IDs with generic labels in AI reports"
+                    value={false}
+                    onChange={() => {}}
+                  />
+                  <ToggleRow
+                    label="Share usage analytics"
+                    desc="Help improve Cloud Guardian (anonymous data only)"
+                    value={false}
+                    onChange={() => {}}
+                  />
+                </div>
+
+                <div className="mt-8 pt-6 border-t" style={{borderColor: 'rgba(255,255,255,0.05)'}}>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-red-500 mb-4">Danger zone</div>
+                  <button
+                    className="text-xs font-medium px-4 py-2.5 rounded-lg border transition-colors hover:bg-red-500/10"
+                    style={{borderColor: 'rgba(248,113,113,0.3)', color: '#F87171', background: 'transparent', cursor: 'pointer'}}
+                  >
+                    Delete account
+                  </button>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Save Button */}
-          <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid #f3f4f6' }}>
-            <button onClick={handleSave} disabled={saving}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                background: saved ? '#16a34a' : '#0F6E56', color: '#fff',
-                border: 'none', padding: '10px 22px', borderRadius: 10,
-                fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s'
-              }}>
-              {saved ? <><Check size={15} /> Saved!</> : saving ? 'Saving...' : <><Save size={15} /> Save Changes</>}
-            </button>
-          </div>
+            {/* AWS CONFIG TAB */}
+            {activeTab === 'aws' && (
+              <div className="animate-entrance">
+                <SectionTitle>AWS configuration</SectionTitle>
+
+                {!isConnected ? (
+                  /* Not connected state */
+                  <div className="text-center py-16">
+                    <div className="text-6xl mb-6 opacity-80" style={{textShadow: '0 0 30px rgba(255,255,255,0.2)'}}>☁️</div>
+                    <div className="text-lg font-semibold text-white mb-2">
+                      No AWS account connected
+                    </div>
+                    <div className="text-sm text-white/50 mb-8 leading-relaxed max-w-sm mx-auto">
+                      Connect your AWS account to start monitoring your infrastructure, detecting anomalies, and optimizing costs.
+                    </div>
+                    <button
+                      onClick={() => { window.location.href = '/connect-aws' }}
+                      className="text-sm px-6 py-3 rounded-xl text-white font-bold transition-all hover:scale-105"
+                      style={{background: 'linear-gradient(135deg, #0F6E56, #094d3c)', boxShadow: '0 4px 15px rgba(15,110,86,0.3)', border: 'none', cursor: 'pointer'}}
+                    >
+                      🔌 Connect AWS account
+                    </button>
+                    <div className="mt-5 text-xs text-white/30 font-medium">
+                      Takes 2 minutes · Read-only access · Free
+                    </div>
+                  </div>
+                ) : (
+                  /* Connected state */
+                  <div className="flex flex-col gap-6 mt-6">
+
+                    {/* Status banner */}
+                    <div
+                      className="rounded-xl p-5 flex items-center justify-between shadow-lg"
+                      style={{background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.2)'}}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div
+                          className="w-10 h-10 rounded-full flex items-center justify-center text-white text-lg font-bold shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                          style={{background: '#0F6E56'}}
+                        >
+                          ✓
+                        </div>
+                        <div>
+                          <div className="text-sm font-bold tracking-wide" style={{color: '#34D399'}}>
+                            AWS account connected
+                          </div>
+                          <div className="text-xs text-emerald-100/50 mt-1">
+                            Monitoring active · metrics collected every 15 minutes
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { window.location.href = '/connect-aws' }}
+                        className="text-xs font-medium px-4 py-2.5 rounded-lg border transition-colors hover:bg-white/5"
+                        style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.8)', background: 'transparent', cursor: 'pointer'}}
+                      >
+                        Add another
+                      </button>
+                    </div>
+
+                    {/* Account details */}
+                    <div className="rounded-xl p-5" style={{background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)'}}>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-4">Account details</div>
+                      <div className="grid grid-cols-2 gap-5">
+                        {[
+                          {
+                            label: 'Account ID',
+                            value: profile.aws_account_id || process.env.NEXT_PUBLIC_AWS_ACCOUNT_ID || '—'
+                          },
+                          {
+                            label: 'Region',
+                            value: currentRegion
+                          },
+                          {label: 'Monitoring status', value: 'Active'},
+                          {label: 'Collection interval', value: 'Every 15 minutes'},
+                        ].map(item => (
+                          <div key={item.label}>
+                            <div className="text-xs text-white/40 mb-1">{item.label}</div>
+                            <div className="text-sm font-semibold text-white/90">{item.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Role ARN */}
+                    {profile.aws_role_arn && (
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wider text-white/40 mb-2">IAM Role ARN</div>
+                        <div
+                          className="text-xs font-mono p-4 rounded-xl break-all"
+                          style={{background: 'rgba(5,11,24,0.5)', border: '1px solid rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)'}}
+                        >
+                          {profile.aws_role_arn}
+                        </div>
+                        <div className="text-xs text-white/30 mt-2 font-medium">
+                          Read-only access · revoke anytime by deleting this role from your AWS console
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Region selector */}
+                    <div className="mt-2">
+                      <Select
+                        label="Default monitoring region"
+                        value={profile.aws_region || currentRegion}
+                        onChange={(v: string) => {
+                          setProfile(p => ({...p, aws_region: v}))
+                          setCurrentRegion(v)
+                          if (typeof window !== 'undefined') {
+                            localStorage.setItem('selected_region', v)
+                            window.dispatchEvent(new Event('region-changed'))
+                          }
+                        }}
+                        options={[
+                          'us-east-1','us-east-2','us-west-1','us-west-2',
+                          'ap-south-1','ap-southeast-1','ap-northeast-1',
+                          'eu-west-1','eu-central-1'
+                        ].map(r => ({value: r, label: r}))}
+                      />
+                    </div>
+
+                    {/* Disconnect */}
+                    <div className="pt-6 mt-2 border-t" style={{borderColor: 'rgba(255,255,255,0.05)'}}>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-red-500 mb-2">
+                        Disconnect account
+                      </div>
+                      <div className="text-xs text-red-200/50 mb-4 max-w-md leading-relaxed">
+                        This removes the connection from Cloud Guardian. Your IAM role in AWS will remain — delete it manually from your AWS Console to fully revoke access.
+                      </div>
+                      <button
+                        onClick={handleDisconnect}
+                        className="text-xs font-medium px-4 py-2.5 rounded-lg border transition-colors hover:bg-red-500/10"
+                        style={{borderColor: 'rgba(248,113,113,0.3)', color: '#F87171', background: 'transparent', cursor: 'pointer'}}
+                      >
+                        Disconnect AWS account
+                      </button>
+                    </div>
+
+                  </div>
+                )}
+              </div>
+            )}
+
         </div>
       </div>
     </div>

@@ -35,6 +35,17 @@ export default function ConnectAWSPage() {
       return
     }
     localStorage.setItem('aws_connected', 'true')
+    // Save to profile so Settings AWS tab shows the details
+    const existingProfile = JSON.parse(localStorage.getItem('cg_user_profile') || '{}')
+    const updatedProfile = {
+      ...existingProfile,
+      aws_role_arn: roleArn,
+      aws_region: region,
+      aws_account_id: roleArn.split(':')[4] || ''
+    }
+    localStorage.setItem('cg_user_profile', JSON.stringify(updatedProfile))
+    window.dispatchEvent(new Event('profile-updated'))
+    
     setLoading(true)
     setError('')
 
@@ -50,32 +61,30 @@ export default function ConnectAWSPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-lg font-semibold text-gray-900">Connect AWS account</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Add a new AWS account to monitor</p>
+    <div className="animate-entrance w-full">
+      <div className="mb-8">
+        <h1 className="text-lg font-semibold text-white">Connect AWS account</h1>
+        <p className="text-xs text-white/50 mt-0.5">Add a new AWS account to monitor with read-only access</p>
       </div>
 
       {success ? (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center">
-          <div className="text-5xl mb-4">✅</div>
-          <div className="text-sm font-semibold text-gray-900 mb-2">Account connected successfully!</div>
-          <div className="text-xs text-gray-400">Redirecting to dashboard — first metrics will appear in 15 minutes</div>
+        <div className="auth-glass rounded-2xl p-12 text-center shadow-[0_0_50px_rgba(16,185,129,0.1)]">
+          <div className="text-5xl mb-4" style={{textShadow: '0 0 20px rgba(52,211,153,0.4)'}}>✅</div>
+          <div className="text-lg font-semibold text-white mb-2">Account connected successfully!</div>
+          <div className="text-xs text-white/50">Redirecting to dashboard — first metrics will appear in 15 minutes</div>
         </div>
       ) : (
-        <>
+        <div className="grid grid-cols-2 gap-8">
           {/* Steps */}
-          <div className="flex flex-col gap-3 mb-6">
+          <div className="flex flex-col gap-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-white/40 mb-2">Instructions</h2>
             {steps.map((step, i) => (
-              <div key={step.num} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex gap-4">
-                <div className="text-2xl font-bold flex-shrink-0" style={{color: '#e5e7eb'}}>{step.num}</div>
+              <div key={step.num} className="auth-glass rounded-xl p-5 flex gap-5 transition-all hover:scale-[1.02]" style={{animationDelay: `${i * 0.1}s`}}>
+                <div className="text-3xl font-black text-white/10" style={{textShadow: '0 0 20px rgba(255,255,255,0.05)'}}>{step.num}</div>
                 <div>
-                  <div className="text-sm font-medium text-gray-900 mb-1">{step.title}</div>
-                  <div className="text-xs text-gray-500 leading-relaxed">{step.desc}</div>
+                  <div className="text-sm font-semibold text-white mb-1.5">{step.title}</div>
+                  <div className="text-xs text-white/50 leading-relaxed">{step.desc}</div>
                   {i === 0 && (
-                    // <button className="mt-3 text-xs px-3 py-1.5 rounded-lg text-white transition-colors" style={{background: '#0F6E56'}}>
-                    //   Download template
-                    // </button>
                     <button
                       onClick={() => {
                         fetch('/cloudguardian-role.yaml')
@@ -90,16 +99,12 @@ export default function ConnectAWSPage() {
                             URL.revokeObjectURL(url)
                           })
                       }}
+                      className="mt-4 text-xs font-bold px-4 py-2 rounded-lg text-white shadow-lg transition-all hover:scale-105 inline-block"
                       style={{
-                        marginTop: '12px',
-                        fontSize: '12px',
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        background: '#0F6E56',
-                        color: '#fff',
-                        display: 'inline-block',
-                        cursor: 'pointer',
-                        border: 'none'
+                        background: 'linear-gradient(135deg, #0F6E56, #094d3c)',
+                        boxShadow: '0 4px 15px rgba(15,110,86,0.3)',
+                        border: 'none',
+                        cursor: 'pointer'
                       }}
                     >
                       Download template
@@ -111,76 +116,99 @@ export default function ConnectAWSPage() {
           </div>
 
           {/* Form */}
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4">Enter connection details</h2>
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-white/40 mb-2">Connection Details</h2>
+            <div className="auth-glass rounded-2xl p-6">
+              
+              {error && (
+                <div className="rounded-xl px-5 py-4 text-sm text-red-400 mb-6" style={{background: 'rgba(248,113,113,0.05)', border: '1px solid rgba(248,113,113,0.2)'}}>
+                  {error}
+                </div>
+              )}
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-xs text-red-600 mb-4">
-                {error}
-              </div>
-            )}
+              <div className="flex flex-col gap-5">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-white/60 mb-2">
+                    Role ARN <span className="text-emerald-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={roleArn}
+                    onChange={e => setRoleArn(e.target.value)}
+                    placeholder="arn:aws:iam::123456789012:role/CloudGuardian"
+                    className="w-full px-4 py-3 text-xs rounded-xl focus:outline-none transition-colors font-mono"
+                    style={{
+                      background: 'rgba(255,255,255,0.02)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#fff'
+                    }}
+                    onFocus={e => e.currentTarget.style.borderColor = '#0F6E56'}
+                    onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'}
+                  />
+                </div>
 
-            <div className="flex flex-col gap-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                  Role ARN <span className="text-red-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={roleArn}
-                  onChange={e => setRoleArn(e.target.value)}
-                  placeholder="arn:aws:iam::123456789012:role/CloudGuardianMonitorRole"
-                  className="w-full px-3 py-2.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500 font-mono"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-white/60 mb-2">
+                    Account nickname
+                  </label>
+                  <input
+                    type="text"
+                    value={nickname}
+                    onChange={e => setNickname(e.target.value)}
+                    placeholder="e.g. Production, Staging, Dev"
+                    className="w-full px-4 py-3 text-xs rounded-xl focus:outline-none transition-colors"
+                    style={{
+                      background: 'rgba(255,255,255,0.02)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#fff'
+                    }}
+                    onFocus={e => e.currentTarget.style.borderColor = '#0F6E56'}
+                    onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'}
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                  Account nickname
-                </label>
-                <input
-                  type="text"
-                  value={nickname}
-                  onChange={e => setNickname(e.target.value)}
-                  placeholder="e.g. Production, Staging, Dev"
-                  className="w-full px-3 py-2.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                  Primary region
-                </label>
-                <select
-                  value={region}
-                  onChange={e => {
-                    setRegion(e.target.value)
-                    localStorage.setItem('selected_region', e.target.value)
-                    window.dispatchEvent(new Event('region-changed'))
-                  }}
-                  className="w-full px-3 py-2.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-emerald-500"
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-white/60 mb-2">
+                    Primary region
+                  </label>
+                  <select
+                    value={region}
+                    onChange={e => {
+                      setRegion(e.target.value)
+                      localStorage.setItem('selected_region', e.target.value)
+                      window.dispatchEvent(new Event('region-changed'))
+                    }}
+                    className="w-full px-4 py-3 text-xs rounded-xl focus:outline-none transition-colors appearance-none"
+                    style={{
+                      background: 'rgba(255,255,255,0.02)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      color: '#fff'
+                    }}
+                    onFocus={e => e.currentTarget.style.borderColor = '#0F6E56'}
+                    onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'}
                   >
-                  {['us-east-1', 'us-west-2', 'eu-west-1', 'ap-south-1', 'ap-southeast-1'].map(r => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
-              </div>
+                    {['us-east-1', 'us-west-2', 'eu-west-1', 'ap-south-1', 'ap-southeast-1'].map(r => (
+                      <option key={r} value={r} style={{background: '#050B18', color: '#fff'}}>{r}</option>
+                    ))}
+                  </select>
+                </div>
 
-              <button
-                onClick={handleConnect}
-                disabled={loading || !roleArn}
-                className="w-full py-2.5 rounded-lg text-white text-xs font-medium transition-all disabled:opacity-50"
-                style={{background: '#0F6E56'}}
-              >
-                {loading ? 'Validating connection...' : 'Connect account'}
-              </button>
+                <button
+                  onClick={handleConnect}
+                  disabled={loading || !roleArn}
+                  className="w-full mt-2 py-3.5 rounded-xl text-white text-sm font-bold transition-all disabled:opacity-50 hover:scale-[1.02]"
+                  style={{background: 'linear-gradient(135deg, #0F6E56 0%, #185FA5 100%)', boxShadow: '0 4px 15px rgba(15,110,86,0.3)'}}
+                >
+                  {loading ? 'Validating connection...' : 'Connect account'}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-6 p-4 rounded-xl text-xs text-white/40 text-center border" style={{background: 'rgba(255,255,255,0.01)', borderColor: 'rgba(255,255,255,0.03)'}}>
+              🔒 We only request read-only access · You can disconnect anytime · IAM role costs nothing
             </div>
           </div>
-
-          <div className="mt-4 text-xs text-gray-400 text-center">
-            🔒 We only request read-only access · You can disconnect anytime · IAM role costs nothing
-          </div>
-        </>
+        </div>
       )}
     </div>
   )

@@ -2,7 +2,7 @@ import boto3
 import json
 import decimal
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from dotenv import load_dotenv
 
@@ -50,6 +50,33 @@ def collect_ec2_metrics(cloudwatch, instance_id):
         'timestamp': latest['Timestamp'].isoformat(),
         'collected_at': datetime.utcnow().isoformat()
     }
+    
+def cleanup_stale_metrics():
+    """Remove metrics older than 24 hours from DynamoDB"""
+    from datetime import timedelta
+    
+    dynamodb = boto3.resource('dynamodb', region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
+    table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
+    
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    
+    # Scan for old items
+    result = table.scan()
+    items = result.get('Items', [])
+    
+    deleted = 0
+    for item in items:
+        if item.get('timestamp', '') < cutoff:
+            table.delete_item(Key={
+                'instance_id': item['instance_id'],
+                'timestamp': item['timestamp']
+            })
+            deleted += 1
+    
+    if deleted > 0:
+        print(f"Cleaned up {deleted} stale metric records")
+        
+        
 
 def list_running_instances(ec2):
     """Get all running EC2 instance IDs"""
@@ -86,17 +113,14 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 def main(event=None, context=None):
-    """Lambda handler — also callable locally"""
     print("Starting metrics collection...")
 
     cloudwatch = get_cloudwatch_client()
     ec2 = get_ec2_client()
 
-    # Get all running instances
     instance_ids = list_running_instances(ec2)
     print(f"Found {len(instance_ids)} running instances: {instance_ids}")
 
-    # Collect metrics for each
     all_metrics = []
     for instance_id in instance_ids:
         metrics = collect_ec2_metrics(cloudwatch, instance_id)
@@ -104,15 +128,16 @@ def main(event=None, context=None):
             all_metrics.append(metrics)
             print(f"Collected metrics for {instance_id}: CPU avg={metrics['cpu_avg']}%")
 
-    # Save to DynamoDB
     if all_metrics:
         save_metrics_to_dynamodb(all_metrics)
+
+    # ← Add this line
+    cleanup_stale_metrics()
 
     return {
         'statusCode': 200,
         'body': json.dumps({
             'message': f'Collected metrics for {len(all_metrics)} instances',
-            'metrics': all_metrics
         }, cls=DecimalEncoder)
     }
 
