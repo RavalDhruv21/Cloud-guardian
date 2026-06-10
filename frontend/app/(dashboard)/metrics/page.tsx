@@ -106,6 +106,13 @@ export default function MetricsPage() {
         if (firstInstance) {
           setSelected(firstInstance)
           fetchHistory(firstInstance, localMap)
+
+          // Auto-refresh every 5 minutes like CloudWatch
+          const interval = setInterval(() => {
+            fetchHistory(firstInstance, localMap)
+          }, 5 * 60 * 1000)
+
+          return () => clearInterval(interval)
         }
       } catch (err) {
         console.error('Failed to fetch metrics:', err)
@@ -163,7 +170,7 @@ export default function MetricsPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="w-full">
       <div className="flex items-center justify-between mb-6 animate-entrance">
         <div>
           <h1 className="text-lg font-semibold text-white">Live metrics</h1>
@@ -275,12 +282,13 @@ export default function MetricsPage() {
                     formatter={(v: number) => [`${v.toFixed(1)}%`, 'CPU']}
                   />
                   <Line
-                    type="monotone"
+                    type="monotone"          // ← keep as monotone for smooth curves
                     dataKey="cpu"
                     stroke={statusColor(currentCpu)}
-                    strokeWidth={3}
-                    dot={data.length < 10 ? {r: 4, fill: statusColor(currentCpu), stroke: '#050B18', strokeWidth: 2} : false}
-                    activeDot={{r: 6, fill: '#fff', stroke: statusColor(currentCpu), strokeWidth: 2}}
+                    strokeWidth={2}          // ← thinner like CloudWatch
+                    dot={false}              // ← no dots, clean line
+                    activeDot={{r: 4, fill: statusColor(currentCpu), stroke: 'transparent'}}
+                    isAnimationActive={false} // ← no animation on refresh, data just updates
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -336,11 +344,11 @@ export default function MetricsPage() {
                       dy={10}
                     />
                     <YAxis
-                      tick={{fontSize: 9, fill: 'rgba(255,255,255,0.4)'}}
+                      tick={{fontSize: 10, fill: 'rgba(255,255,255,0.4)'}}
                       tickLine={false}
                       axisLine={false}
-                      domain={[0, 100]}
-                      tickFormatter={v => `${v}%`}
+                      domain={['auto', 'auto']}        // ← auto-scale like CloudWatch (not fixed 0-100)
+                      tickFormatter={v => `${v.toFixed(3)}%`}  // ← 0.205% style
                     />
                     <Tooltip
                       contentStyle={{fontSize: 11, background: 'rgba(5,11,24,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff'}}

@@ -80,7 +80,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="w-full">
       {/* Stats row */}
       <div className="grid grid-cols-4 gap-5 mb-8">
         {[

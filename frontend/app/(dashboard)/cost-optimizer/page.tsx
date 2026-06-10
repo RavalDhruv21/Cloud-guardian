@@ -7,6 +7,7 @@ export default function CostOptimizerPage() {
   const [loading, setLoading] = useState(true)
   const [confirming, setConfirming] = useState<string | null>(null)
   const [stopped, setStopped] = useState<string[]>([])
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
   useEffect(() => {
     const fetchSuggestions = async () => {
@@ -31,16 +32,77 @@ export default function CostOptimizerPage() {
     }
   }
 
-  const handleStop = (resourceId: string) => {
-    setStopped(prev => [...prev, resourceId])
-    setSuggestions(prev => prev.filter(s => s.resource_id !== resourceId))
+  const getConfirmMessage = (item: any) => {
+    switch (item.resource_type) {
+      case 'EC2':
+        if (item.recommendation?.toLowerCase().includes('downsize'))
+          return { title: 'Downsize EC2 instance?', msg: `This will stop i ${item.resource_id} and resize it to t3.micro. Instance will restart after resize.` }
+        return { title: 'Stop EC2 instance?', msg: `This will stop instance ${item.resource_id}. Data is preserved. You can restart it anytime.` }
+      case 'EBS':
+        return { title: 'Delete EBS volume?', msg: `This will permanently delete volume ${item.resource_id}. Create a snapshot first if you need the data.` }
+      case 'ElasticIP':
+        return { title: 'Release Elastic IP?', msg: `This will release ${item.resource_id} back to AWS. You will stop being charged immediately.` }
+      case 'RDS':
+        return { title: 'Stop RDS instance?', msg: `This will stop ${item.resource_id}. Data is preserved. AWS auto-restarts RDS after 7 days.` }
+      default:
+        return { title: 'Confirm action?', msg: `This will act on ${item.resource_id}. Please verify before proceeding.` }
+    }
+  }
+
+  const handleStop = async (item: any) => {
+    const token = localStorage.getItem('cg_token') || ''
+
+    try {
+      let endpoint = ''
+      let body: any = { region: item.region || 'us-east-1' }
+
+      switch (item.resource_type) {
+        case 'EC2':
+          if (item.recommendation?.toLowerCase().includes('downsize')) {
+            endpoint = '/ec2/resize'
+            body = { ...body, instance_id: item.resource_id, target_type: 't3.micro' }
+          } else {
+            endpoint = '/ec2/stop'
+            body = { ...body, instance_id: item.resource_id }
+          }
+          break
+        case 'EBS':
+          endpoint = '/ebs/delete'
+          body = { ...body, volume_id: item.resource_id }
+          break
+        case 'ElasticIP':
+          endpoint = '/eip/release'
+          body = { ...body, allocation_id: item.resource_id }
+          break
+        case 'RDS':
+          endpoint = '/rds/stop'
+          body = { ...body, instance_id: item.resource_id }
+          break
+      }
+
+      if (endpoint) {
+        await fetch(`${API_URL}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        })
+      }
+    } catch (err) {
+      console.error('Action failed:', err)
+    }
+
+    // Remove from UI regardless
+    setStopped(prev => [...prev, item.resource_id])
+    setSuggestions(prev => prev.filter(s => s.resource_id !== item.resource_id))
     setConfirming(null)
   }
 
   const active = suggestions.filter(s => !stopped.includes(s.resource_id))
 
   const totalSavings = active.reduce((sum, s) => {
-    const amt = parseFloat(s.estimated_saving?.replace('$','').replace('/mo','') || '0')
+    // Try both field names
+    const raw = s.saving_per_month || s.estimated_saving || '0'
+    const amt = parseFloat(String(raw).replace('$','').replace('/mo','').replace('/month',''))
     return sum + (isNaN(amt) ? 0 : amt)
   }, 0)
 
@@ -121,7 +183,7 @@ export default function CostOptimizerPage() {
                 <div className="flex-1">
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="text-base font-semibold text-white">{item.issue}</div>
-                    <div className="text-xl font-bold" style={{color: '#34D399', textShadow: '0 0 10px rgba(52,211,153,0.2)'}}>{item.estimated_saving}</div>
+                    <div className="text-xl font-bold" style={{color: '#34D399', textShadow: '0 0 10px rgba(52,211,153,0.2)'}}>${parseFloat(item.saving_per_month || item.estimated_saving || '0').toFixed(2)}/mo</div>
                   </div>
                   <div className="text-xs text-white/40 mb-3 font-mono">{item.resource_id}</div>
                   
@@ -131,11 +193,11 @@ export default function CostOptimizerPage() {
 
                   {confirming === item.resource_id ? (
                     <div className="rounded-xl p-4 mb-3 border" style={{background: 'rgba(248,113,113,0.05)', borderColor: 'rgba(248,113,113,0.2)'}}>
-                      <div className="text-xs font-semibold text-red-400 mb-2 uppercase tracking-wider">⚠️ Confirm action?</div>
-                      <div className="text-sm text-red-300/80 mb-4">This will stop/remove the resource. Data is preserved.</div>
+                      <div className="text-xs font-semibold text-red-400 mb-2 uppercase tracking-wider">⚠️ {getConfirmMessage(item).title}</div>
+                      <div className="text-sm text-red-300/80 mb-4">{getConfirmMessage(item).msg}</div>
                       <div className="flex gap-3">
                         <button
-                          onClick={() => handleStop(item.resource_id)}
+                          onClick={() => handleStop(item)}
                           className="text-xs font-bold px-4 py-2 rounded-lg text-white shadow-lg transition-all hover:scale-105"
                           style={{background: 'linear-gradient(135deg, #EF4444, #B91C1C)'}}
                         >

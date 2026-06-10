@@ -14,6 +14,8 @@ class DecimalEncoder(json.JSONEncoder):
         if isinstance(obj, Decimal):
             return float(obj)
         return super().default(obj)
+    
+
 
 def cors_headers():
     return {
@@ -29,6 +31,55 @@ def response(status_code, body):
         'headers': cors_headers(),
         'body': json.dumps(body, cls=DecimalEncoder)
     }
+    
+# cost optimizer updation of EC2, EBS, Elastic IP, stop RDS, Down Size
+
+def stop_ec2(body):
+    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    ec2.stop_instances(InstanceIds=[body['instance_id']])
+    return response(200, {'message': f"Stopped {body['instance_id']}"})
+
+def delete_ebs(body):
+    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    ec2.delete_volume(VolumeId=body['volume_id'])
+    return response(200, {'message': f"Deleted {body['volume_id']}"})
+
+def release_eip(body):
+    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    ec2.release_address(AllocationId=body['allocation_id'])
+    return response(200, {'message': f"Released {body['allocation_id']}"})
+
+def stop_rds(body):
+    rds = boto3.client('rds', region_name=body.get('region', 'us-east-1'))
+    rds.stop_db_instance(DBInstanceIdentifier=body['instance_id'])
+    return response(200, {'message': f"Stopped RDS {body['instance_id']}"})
+
+def resize_ec2(body):
+    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    instance_id = body['instance_id']
+    target_type = body.get('target_type', 't3.micro')
+    
+    # Step 1 — Stop the instance first
+    ec2.stop_instances(InstanceIds=[instance_id])
+    
+    # Step 2 — Wait until stopped
+    waiter = ec2.get_waiter('instance_stopped')
+    waiter.wait(InstanceIds=[instance_id])
+    
+    # Step 3 — Change instance type
+    ec2.modify_instance_attribute(
+        InstanceId=instance_id,
+        InstanceType={'Value': target_type}
+    )
+    
+    # Step 4 — Restart it
+    ec2.start_instances(InstanceIds=[instance_id])
+    
+    return response(200, {
+        'message': f"Resized {instance_id} to {target_type} and restarted"
+    })
+
+
 
 # ── GET /metrics ──────────────────────────────────────────
 def get_metrics(account_id=None, region=None):
@@ -43,22 +94,22 @@ def get_metrics(account_id=None, region=None):
     return response(200, {'metrics': items[:50]})
 
 
-def get_instance_metrics_history(instance_id, region='us-east-1'):
-    """Fetch last 24 hours of CPU data from CloudWatch"""
+def get_instance_metrics_history(instance_id, region='us-east-1', hours=2):
     try:
         from datetime import timedelta
         cloudwatch = boto3.client('cloudwatch', region_name=region)
         
         end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(hours=24)
+        start_time = end_time - timedelta(hours=int(hours))
         
+        # 5-minute period = matches CloudWatch console exactly
         result = cloudwatch.get_metric_statistics(
             Namespace='AWS/EC2',
             MetricName='CPUUtilization',
             Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
             StartTime=start_time,
             EndTime=end_time,
-            Period=3600,
+            Period=300,           # 5 minutes — same as CloudWatch default view
             Statistics=['Average', 'Maximum']
         )
         
@@ -69,11 +120,16 @@ def get_instance_metrics_history(instance_id, region='us-east-1'):
         for dp in datapoints:
             chart_data.append({
                 'time': dp['Timestamp'].strftime('%H:%M'),
-                'cpu': round(dp['Average'], 2),
-                'cpu_max': round(dp['Maximum'], 2),
+                'cpu': round(dp['Average'], 3),   # 3 decimals like CloudWatch (0.205%)
+                'cpu_max': round(dp['Maximum'], 3),
             })
         
-        return response(200, {'history': chart_data, 'instance_id': instance_id})
+        return response(200, {
+            'history': chart_data,
+            'instance_id': instance_id,
+            'period_minutes': 5,
+            'window_hours': hours
+        })
     except Exception as e:
         return response(500, {'error': str(e)})
 
@@ -177,6 +233,18 @@ def get_reports():
             })
         reports.sort(key=lambda x: x['date'], reverse=True)
         return response(200, {'reports': reports})
+    except Exception as e:
+        return response(500, {'error': str(e)})
+    
+    
+def get_report_content(report_key, region='us-east-1'):
+    """Fetch report text content from S3"""
+    try:
+        s3 = boto3.client('s3', region_name=region)
+        bucket = os.getenv('S3_BUCKET_NAME')
+        result = s3.get_object(Bucket=bucket, Key=report_key)
+        content = result['Body'].read().decode('utf-8')
+        return response(200, {'content': content})
     except Exception as e:
         return response(500, {'error': str(e)})
 
@@ -317,8 +385,14 @@ def main(event, context):
         ('POST', '/anomalies/resolve'):        lambda: resolve_anomaly(body),
         ('GET',  '/cost-suggestions'):         lambda: get_cost_suggestions(query),
         ('POST', '/cost-suggestions/dismiss'): lambda: dismiss_suggestion(body),
+        ('POST', '/ec2/stop'):                 lambda: stop_ec2(body),
+        ('POST', '/ebs/delete'):               lambda: delete_ebs(body),
+        ('POST', '/eip/release'):              lambda: release_eip(body),
+        ('POST', '/rds/stop'):                 lambda: stop_rds(body),
+        ('POST', '/ec2/resize'):               lambda: resize_ec2(body),
         ('GET',  '/security-events'):          lambda: get_security_events(query),
         ('GET',  '/reports'):                  lambda: get_reports(),
+        ('GET', '/reports/content'):           lambda: get_report_content(query.get('key', ''),query.get('region', 'us-east-1')),
         ('POST', '/agent'):                    lambda: ask_agent(body),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),
         ('GET', '/audit-logs'):                lambda: get_audit_logs(query.get('region', 'us-east-1')),

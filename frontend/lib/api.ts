@@ -29,10 +29,13 @@ export const getMetricsHistory = async (instanceId: string) => {
   const region = typeof window !== 'undefined'
     ? localStorage.getItem('selected_region') || 'us-east-1'
     : 'us-east-1'
-  const res = await api.get('/metrics/history', {
-    params: { instance_id: instanceId, region }
-  })
-  return res.data
+  const token = localStorage.getItem('cg_token') || ''
+  const res = await fetch(
+    `${API_URL}/metrics/history?instance_id=${instanceId}&region=${region}&hours=2`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const data = await res.json()
+  return data
 }
 
 // Anomalies
@@ -86,6 +89,14 @@ export const getAuditLogs = async (region?: string) => {
 // Reports
 export const getReports = async () => {
   const res = await api.get('/reports')
+  return res.data
+}
+
+export const getReportContent = async (key: string) => {
+  const region = typeof window !== 'undefined'
+    ? localStorage.getItem('selected_region') || 'us-east-1'
+    : 'us-east-1'
+  const res = await api.get('/reports/content', { params: { key, region } })
   return res.data
 }
 

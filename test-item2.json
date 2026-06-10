@@ -1,0 +1,15 @@
+{
+  "account_id": {"S": "808715035605"},
+  "timestamp": {"S": "2026-06-10T06:04:00Z"},
+  "id": {"S": "test-005"},
+  "resource_id": {"S": "i-0089abc015ee850af"},
+  "resource_type": {"S": "EC2"},
+  "issue": {"S": "CPU avg 2 percent on t3.large - instance is oversized"},
+  "saving_per_month": {"N": "35.00"},
+  "region": {"S": "us-east-1"},
+  "instance_type": {"S": "t3.large"},
+  "recommendation": {"S": "Downsize to t3.micro - save 80 percent on compute cost"},
+  "days_idle": {"N": "7"},
+  "status": {"S": "open"},
+  "created_at": {"S": "2026-06-10T06:04:00Z"}
+}

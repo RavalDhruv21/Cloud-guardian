@@ -1,0 +1,15 @@
+{
+  "account_id": {"S": "808715035605"},
+  "timestamp": {"S": "2026-06-10T06:00:00Z"},
+  "id": {"S": "test-001"},
+  "resource_id": {"S": "i-0724b487749e989ca"},
+  "resource_type": {"S": "EC2"},
+  "issue": {"S": "CPU avg 0.3 percent over 7 days - idle instance"},
+  "saving_per_month": {"N": "28.50"},
+  "region": {"S": "us-east-1"},
+  "instance_type": {"S": "t3.micro"},
+  "recommendation": {"S": "Stop or terminate this idle instance"},
+  "days_idle": {"N": "7"},
+  "status": {"S": "open"},
+  "created_at": {"S": "2026-06-10T06:00:00Z"}
+}
