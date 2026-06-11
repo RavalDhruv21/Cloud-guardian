@@ -14,14 +14,12 @@ class DecimalEncoder(json.JSONEncoder):
         if isinstance(obj, Decimal):
             return float(obj)
         return super().default(obj)
-    
-
 
 def cors_headers():
     return {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+        'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
         'Content-Type': 'application/json'
     }
 
@@ -31,55 +29,85 @@ def response(status_code, body):
         'headers': cors_headers(),
         'body': json.dumps(body, cls=DecimalEncoder)
     }
-    
-# cost optimizer updation of EC2, EBS, Elastic IP, stop RDS, Down Size
+
+# ── Cross-account role assumption ─────────────────────────
+def get_user_role_arn(user_id='default-user'):
+    """Get the connected account's role ARN from DynamoDB"""
+    try:
+        table = dynamodb.Table('cloud-guardian-users')
+        result = table.get_item(Key={'user_id': user_id})
+        item = result.get('Item', {})
+        return item.get('role_arn'), item.get('region', 'us-east-1'), item.get('account_id')
+    except Exception as e:
+        print(f"Error getting user role: {e}")
+        return None, 'us-east-1', None
+
+def get_assumed_client(service, role_arn=None, region='us-east-1'):
+    """
+    Returns a boto3 client that uses the user's cross-account role.
+    Falls back to Lambda's own credentials if no role_arn.
+    """
+    if not role_arn:
+        return boto3.client(service, region_name=region)
+    try:
+        sts = boto3.client('sts')
+        assumed = sts.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName='CloudGuardianSession',
+            DurationSeconds=900
+        )
+        creds = assumed['Credentials']
+        return boto3.client(
+            service,
+            region_name=region,
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken']
+        )
+    except Exception as e:
+        print(f"Role assumption failed: {e} — falling back to own credentials")
+        return boto3.client(service, region_name=region)
+
+# ── Cost optimizer actions ────────────────────────────────
 
 def stop_ec2(body):
-    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    role_arn, _, _ = get_user_role_arn()
+    ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.stop_instances(InstanceIds=[body['instance_id']])
     return response(200, {'message': f"Stopped {body['instance_id']}"})
 
 def delete_ebs(body):
-    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    role_arn, _, _ = get_user_role_arn()
+    ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.delete_volume(VolumeId=body['volume_id'])
     return response(200, {'message': f"Deleted {body['volume_id']}"})
 
 def release_eip(body):
-    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    role_arn, _, _ = get_user_role_arn()
+    ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.release_address(AllocationId=body['allocation_id'])
     return response(200, {'message': f"Released {body['allocation_id']}"})
 
 def stop_rds(body):
-    rds = boto3.client('rds', region_name=body.get('region', 'us-east-1'))
+    role_arn, _, _ = get_user_role_arn()
+    rds = get_assumed_client('rds', role_arn, body.get('region', 'us-east-1'))
     rds.stop_db_instance(DBInstanceIdentifier=body['instance_id'])
     return response(200, {'message': f"Stopped RDS {body['instance_id']}"})
 
 def resize_ec2(body):
-    ec2 = boto3.client('ec2', region_name=body.get('region', 'us-east-1'))
+    role_arn, _, _ = get_user_role_arn()
+    ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     instance_id = body['instance_id']
     target_type = body.get('target_type', 't3.micro')
-    
-    # Step 1 — Stop the instance first
     ec2.stop_instances(InstanceIds=[instance_id])
-    
-    # Step 2 — Wait until stopped
     waiter = ec2.get_waiter('instance_stopped')
     waiter.wait(InstanceIds=[instance_id])
-    
-    # Step 3 — Change instance type
     ec2.modify_instance_attribute(
         InstanceId=instance_id,
         InstanceType={'Value': target_type}
     )
-    
-    # Step 4 — Restart it
     ec2.start_instances(InstanceIds=[instance_id])
-    
-    return response(200, {
-        'message': f"Resized {instance_id} to {target_type} and restarted"
-    })
-
-
+    return response(200, {'message': f"Resized {instance_id} to {target_type} and restarted"})
 
 # ── GET /metrics ──────────────────────────────────────────
 def get_metrics(account_id=None, region=None):
@@ -93,37 +121,39 @@ def get_metrics(account_id=None, region=None):
     items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'metrics': items[:50]})
 
-
+# ── GET /metrics/history ──────────────────────────────────
 def get_instance_metrics_history(instance_id, region='us-east-1', hours=2):
     try:
         from datetime import timedelta
-        cloudwatch = boto3.client('cloudwatch', region_name=region)
-        
+        # Use user's cross-account role for CloudWatch
+        role_arn, user_region, _ = get_user_role_arn()
+        effective_region = region or user_region
+        cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
+
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=int(hours))
-        
-        # 5-minute period = matches CloudWatch console exactly
+
         result = cloudwatch.get_metric_statistics(
             Namespace='AWS/EC2',
             MetricName='CPUUtilization',
             Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
             StartTime=start_time,
             EndTime=end_time,
-            Period=300,           # 5 minutes — same as CloudWatch default view
+            Period=300,
             Statistics=['Average', 'Maximum']
         )
-        
+
         datapoints = result.get('Datapoints', [])
         datapoints.sort(key=lambda x: x['Timestamp'])
-        
+
         chart_data = []
         for dp in datapoints:
             chart_data.append({
                 'time': dp['Timestamp'].strftime('%H:%M'),
-                'cpu': round(dp['Average'], 3),   # 3 decimals like CloudWatch (0.205%)
+                'cpu': round(dp['Average'], 3),
                 'cpu_max': round(dp['Maximum'], 3),
             })
-        
+
         return response(200, {
             'history': chart_data,
             'instance_id': instance_id,
@@ -133,12 +163,17 @@ def get_instance_metrics_history(instance_id, region='us-east-1', hours=2):
     except Exception as e:
         return response(500, {'error': str(e)})
 
-
 # ── GET /anomalies ─────────────────────────────────────────
 def get_anomalies(query_params=None):
+    # Get user's account_id to filter their anomalies
+    _, _, account_id = get_user_role_arn()
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     result = table.scan()
     items = result.get('Items', [])
+
+    # Filter by user's account if available
+    if account_id:
+        items = [i for i in items if i.get('account_id') == account_id or not i.get('account_id')]
 
     if query_params:
         severity = query_params.get('severity')
@@ -157,10 +192,8 @@ def resolve_anomaly(body):
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     instance_id = body.get('instance_id')
     timestamp = body.get('timestamp')
-
     if not instance_id or not timestamp:
         return response(400, {'error': 'instance_id and timestamp required'})
-
     table.update_item(
         Key={'instance_id': instance_id, 'timestamp': timestamp},
         UpdateExpression='SET resolved = :r, resolved_at = :t',
@@ -173,9 +206,13 @@ def resolve_anomaly(body):
 
 # ── GET /cost-suggestions ──────────────────────────────────
 def get_cost_suggestions(query_params=None):
+    _, _, account_id = get_user_role_arn()
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
     result = table.scan()
     items = result.get('Items', [])
+    # Filter by user's account_id
+    if account_id:
+        items = [i for i in items if i.get('account_id') == account_id]
     items = [i for i in items if i.get('status') != 'dismissed']
     items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'suggestions': items})
@@ -184,14 +221,11 @@ def get_cost_suggestions(query_params=None):
 def dismiss_suggestion(body):
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
     resource_id = body.get('resource_id')
-
     result = table.scan()
     items = result.get('Items', [])
     target = next((i for i in items if i.get('resource_id') == resource_id), None)
-
     if not target:
         return response(404, {'error': 'Suggestion not found'})
-
     table.update_item(
         Key={'account_id': target['account_id'], 'timestamp': target['timestamp']},
         UpdateExpression='SET #s = :s',
@@ -202,10 +236,13 @@ def dismiss_suggestion(body):
 
 # ── GET /security-events ───────────────────────────────────
 def get_security_events(query_params=None):
+    _, _, account_id = get_user_role_arn()
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     result = table.scan()
     items = result.get('Items', [])
     security = [i for i in items if i.get('event_type') in ['security', 'remediation']]
+    if account_id:
+        security = [i for i in security if i.get('account_id') == account_id or not i.get('account_id')]
     security.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'events': security})
 
@@ -213,7 +250,6 @@ def get_security_events(query_params=None):
 def get_reports():
     s3 = boto3.client('s3', region_name='us-east-1')
     bucket = os.getenv('S3_BUCKET_NAME')
-
     try:
         result = s3.list_objects_v2(Bucket=bucket, Prefix='reports/')
         objects = result.get('Contents', [])
@@ -235,10 +271,8 @@ def get_reports():
         return response(200, {'reports': reports})
     except Exception as e:
         return response(500, {'error': str(e)})
-    
-    
+
 def get_report_content(report_key, region='us-east-1'):
-    """Fetch report text content from S3"""
     try:
         s3 = boto3.client('s3', region_name=region)
         bucket = os.getenv('S3_BUCKET_NAME')
@@ -255,15 +289,24 @@ def ask_agent(body):
     context = body.get('context', {})
     groq_key = os.getenv('GROQ_API_KEY')
 
+    # Get user's account info for context
+    role_arn, region, account_id = get_user_role_arn()
+
     metrics_table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
     anomalies_table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
 
     recent_metrics = metrics_table.scan(Limit=10).get('Items', [])
     recent_anomalies = anomalies_table.scan(Limit=5).get('Items', [])
+
+    # Filter by user's account
+    if account_id:
+        recent_metrics = [m for m in recent_metrics if m.get('account_id') == account_id]
+        recent_anomalies = [a for a in recent_anomalies if a.get('account_id') == account_id]
+
     unresolved = [a for a in recent_anomalies if not a.get('resolved', False)]
 
     system_prompt = f"""You are Cloud Guardian AI — an expert AWS infrastructure assistant.
-Current account state:
+Current account state (Account: {account_id or 'unknown'}, Region: {region}):
 - Recent metrics: {json.dumps(recent_metrics, cls=DecimalEncoder)[:500]}
 - Unresolved anomalies: {json.dumps(unresolved, cls=DecimalEncoder)[:500]}
 - Additional context: {json.dumps(context)[:200]}
@@ -290,16 +333,16 @@ Keep responses under 150 words unless more detail is needed."""
 
 # ── POST /accounts/connect ─────────────────────────────────
 def connect_account(body):
-    import boto3 as b3
     role_arn = body.get('role_arn')
     nickname = body.get('nickname', 'My AWS Account')
     region = body.get('region', 'us-east-1')
+    user_id = body.get('user_id', 'default-user')
 
     if not role_arn:
         return response(400, {'error': 'role_arn required'})
 
     try:
-        sts = b3.client('sts')
+        sts = boto3.client('sts')
         assumed = sts.assume_role(
             RoleArn=role_arn,
             RoleSessionName='CloudGuardianValidation',
@@ -307,9 +350,10 @@ def connect_account(body):
         )
         account_id = assumed['AssumedRoleUser']['Arn'].split(':')[4]
 
+        # Save to DynamoDB — keyed by user_id so each user has their own account
         users_table = dynamodb.Table('cloud-guardian-users')
         users_table.put_item(Item={
-            'user_id': 'default-user',
+            'user_id': user_id,
             'account_id': account_id,
             'role_arn': role_arn,
             'nickname': nickname,
@@ -324,40 +368,107 @@ def connect_account(body):
         })
     except Exception as e:
         return response(400, {'error': f'Could not assume role: {str(e)}'})
-    
-    
-    
+
+# ── GET /accounts/me ───────────────────────────────────────
+def get_connected_account(user_id='default-user'):
+    """Return the currently connected account info"""
+    try:
+        table = dynamodb.Table('cloud-guardian-users')
+        result = table.get_item(Key={'user_id': user_id})
+        item = result.get('Item')
+        if not item:
+            return response(404, {'error': 'No account connected'})
+        # Don't expose role_arn in response
+        return response(200, {
+            'account_id': item.get('account_id'),
+            'nickname': item.get('nickname'),
+            'region': item.get('region'),
+            'connected_at': item.get('connected_at'),
+            'status': item.get('status'),
+        })
+    except Exception as e:
+        return response(500, {'error': str(e)})
+
+# ── GET /live-metrics ──────────────────────────────────────
+def get_live_metrics(region='us-east-1'):
+    """Fetch real EC2 instances directly from user's account via assumed role"""
+    try:
+        role_arn, user_region, account_id = get_user_role_arn()
+        effective_region = region or user_region
+
+        ec2 = get_assumed_client('ec2', role_arn, effective_region)
+        cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
+
+        from datetime import timedelta
+        instances_resp = ec2.describe_instances(
+            Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
+        )
+
+        live_data = []
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=1)
+
+        for reservation in instances_resp['Reservations']:
+            for inst in reservation['Instances']:
+                instance_id = inst['InstanceId']
+                instance_type = inst['InstanceType']
+
+                # Get CPU from CloudWatch
+                cw_result = cloudwatch.get_metric_statistics(
+                    Namespace='AWS/EC2',
+                    MetricName='CPUUtilization',
+                    Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+                    StartTime=start_time,
+                    EndTime=end_time,
+                    Period=300,
+                    Statistics=['Average', 'Maximum']
+                )
+                datapoints = cw_result.get('Datapoints', [])
+                cpu_avg = round(sum(d['Average'] for d in datapoints) / len(datapoints), 3) if datapoints else 0
+                cpu_max = round(max(d['Maximum'] for d in datapoints), 3) if datapoints else 0
+
+                live_data.append({
+                    'instance_id': instance_id,
+                    'instance_type': instance_type,
+                    'account_id': account_id,
+                    'region': effective_region,
+                    'cpu_avg': cpu_avg,
+                    'cpu_max': cpu_max,
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'state': inst['State']['Name'],
+                })
+
+        return response(200, {'metrics': live_data, 'account_id': account_id, 'region': effective_region})
+    except Exception as e:
+        return response(500, {'error': str(e)})
+
+# ── GET /audit-logs ────────────────────────────────────────
 def get_audit_logs(region='us-east-1'):
     try:
-        cloudtrail = boto3.client('cloudtrail', region_name=region)
-        
-        result = cloudtrail.lookup_events(
-            MaxResults=50,
-        )
-        
+        role_arn, user_region, _ = get_user_role_arn()
+        effective_region = region or user_region
+        cloudtrail = get_assumed_client('cloudtrail', role_arn, effective_region)
+
+        result = cloudtrail.lookup_events(MaxResults=50)
         events = []
         for event in result.get('Events', []):
             source = event.get('EventSource', '')
             name = event.get('EventName', '')
-            if any(svc in source for svc in ['lambda', 'dynamodb', 's3', 'sns', 'apigateway', 'cloudwatch', 'cloudtrail']):
+            if any(svc in source for svc in ['lambda', 'dynamodb', 's3', 'sns', 'apigateway', 'cloudwatch', 'cloudtrail', 'ec2', 'rds']):
                 events.append({
                     'event_id': event.get('EventId', ''),
                     'action': name,
                     'service': source.replace('.amazonaws.com', ''),
                     'user': event.get('Username', 'system'),
                     'status': 'success',
-                    'region': region,
+                    'region': effective_region,
                     'time': event.get('EventTime', '').isoformat() if event.get('EventTime') else '',
                     'detail': f"{name} — {', '.join([r.get('ResourceName', '') for r in event.get('Resources', [])])}"
                 })
-
         events.sort(key=lambda x: x.get('time', ''), reverse=True)
         return response(200, {'logs': events[:50]})
-
     except Exception as e:
         return response(500, {'error': str(e)})
-    
-    
 
 # ── Main router ────────────────────────────────────────────
 def main(event, context):
@@ -372,15 +483,15 @@ def main(event, context):
         except:
             pass
 
-    # Handle CORS preflight
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': cors_headers(), 'body': ''}
 
     print(f"{method} {path}")
 
     routes = {
-        ('GET', '/metrics/history'):           lambda: get_instance_metrics_history(query.get('instance_id', ''),query.get('region', 'us-east-1')),
-        ('GET', '/metrics'):                   lambda: get_metrics(query.get('account_id'),query.get('region')),
+        ('GET',  '/metrics/history'):          lambda: get_instance_metrics_history(query.get('instance_id', ''), query.get('region', 'us-east-1')),
+        ('GET',  '/metrics'):                  lambda: get_metrics(query.get('account_id'), query.get('region')),
+        ('GET',  '/live-metrics'):             lambda: get_live_metrics(query.get('region', 'us-east-1')),
         ('GET',  '/anomalies'):                lambda: get_anomalies(query),
         ('POST', '/anomalies/resolve'):        lambda: resolve_anomaly(body),
         ('GET',  '/cost-suggestions'):         lambda: get_cost_suggestions(query),
@@ -392,10 +503,11 @@ def main(event, context):
         ('POST', '/ec2/resize'):               lambda: resize_ec2(body),
         ('GET',  '/security-events'):          lambda: get_security_events(query),
         ('GET',  '/reports'):                  lambda: get_reports(),
-        ('GET', '/reports/content'):           lambda: get_report_content(query.get('key', ''),query.get('region', 'us-east-1')),
+        ('GET',  '/reports/content'):          lambda: get_report_content(query.get('key', ''), query.get('region', 'us-east-1')),
         ('POST', '/agent'):                    lambda: ask_agent(body),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),
-        ('GET', '/audit-logs'):                lambda: get_audit_logs(query.get('region', 'us-east-1')),
+        ('GET',  '/accounts/me'):              lambda: get_connected_account(query.get('user_id', 'default-user')),
+        ('GET',  '/audit-logs'):               lambda: get_audit_logs(query.get('region', 'us-east-1')),
     }
 
     handler = routes.get((method, path))
