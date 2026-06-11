@@ -19,10 +19,14 @@ api.interceptors.request.use((config) => {
 })
 
 // Metrics
-export const getMetrics = async (accountId?: string) => {
-  const region = typeof window !== 'undefined' ? localStorage.getItem('selected_region') || 'us-east-1' : 'us-east-1'
-  const res = await api.get('/metrics', { params: { account_id: accountId, region } })
-  return res.data
+export const getMetrics = async () => {
+  const region = localStorage.getItem('selected_region') || 'us-east-1'
+  const token = localStorage.getItem('cg_token') || ''
+  const res = await fetch(
+    `${API_URL}/live-metrics?region=${region}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  return res.json()
 }
 
 export const getMetricsHistory = async (instanceId: string) => {
