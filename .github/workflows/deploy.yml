@@ -1,0 +1,57 @@
+name: Deploy Cloud Guardian
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install boto3 requests python-dotenv
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Build and deploy Lambdas
+        run: |
+          mkdir -p build
+
+          deploy_lambda() {
+            NAME=$1
+            FUNCTION=$2
+            echo "Building $NAME..."
+            cd lambdas/$NAME
+            pip install -r requirements.txt -t . 2>/dev/null || true
+            zip -r ../../build/${NAME}.zip . -x "*.pyc" -x "__pycache__/*"
+            cd ../..
+            echo "Deploying $FUNCTION..."
+            aws lambda update-function-code \
+              --function-name $FUNCTION \
+              --zip-file fileb://build/${NAME}.zip \
+              --region us-east-1
+          }
+
+          deploy_lambda collector cloud-guardian-collector
+          deploy_lambda ai_analyzer cloud-guardian-ai-analyzer
+          deploy_lambda cost_optimizer cloud-guardian-cost-optimizer
+          deploy_lambda report_generator cloud-guardian-report-generator
+          deploy_lambda api cloud-guardian-api
+
+      - name: Done
+        run: echo "All Lambdas deployed successfully!"
