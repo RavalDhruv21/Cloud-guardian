@@ -34,30 +34,61 @@ export default function ConnectAWSPage() {
       setError('Invalid Role ARN format. Should start with arn:aws:iam::')
       return
     }
-    localStorage.setItem('aws_connected', 'true')
-    // Save to profile so Settings AWS tab shows the details
-    const existingProfile = JSON.parse(localStorage.getItem('cg_user_profile') || '{}')
-    const updatedProfile = {
-      ...existingProfile,
-      aws_role_arn: roleArn,
-      aws_region: region,
-      aws_account_id: roleArn.split(':')[4] || ''
-    }
-    localStorage.setItem('cg_user_profile', JSON.stringify(updatedProfile))
-    window.dispatchEvent(new Event('profile-updated'))
-    
+
     setLoading(true)
     setError('')
 
-    // Save region to localStorage so topbar updates
-    localStorage.setItem('selected_region', region)
-    window.dispatchEvent(new Event('region-changed'))
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+      const token = localStorage.getItem('cg_token') || ''
 
-    setTimeout(() => {
+      // ── Actually call the API ──
+      const res = await fetch(`${API_URL}/accounts/connect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          role_arn: roleArn,
+          nickname: nickname || 'My AWS Account',
+          region,
+          user_id: token || 'default-user', // use token as user_id for multi-user
+        })
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || 'Failed to connect account')
+        setLoading(false)
+        return
+      }
+
+      // Save to localStorage for UI updates
+      const existingProfile = JSON.parse(localStorage.getItem('cg_user_profile') || '{}')
+      const updatedProfile = {
+        ...existingProfile,
+        aws_role_arn: roleArn,
+        aws_region: region,
+        aws_account_id: data.account_id || roleArn.split(':')[4] || ''
+      }
+      localStorage.setItem('cg_user_profile', JSON.stringify(updatedProfile))
+      localStorage.setItem('aws_connected', 'true')
+      localStorage.setItem('selected_region', region)
+      localStorage.setItem('connected_account_id', data.account_id || '')
+
+      window.dispatchEvent(new Event('profile-updated'))
+      window.dispatchEvent(new Event('region-changed'))
+
       setLoading(false)
       setSuccess(true)
       setTimeout(() => router.push('/dashboard'), 2000)
-    }, 1500)
+
+    } catch (err) {
+      setError('Network error — could not reach Cloud Guardian API')
+      setLoading(false)
+    }
   }
 
   return (
