@@ -1,0 +1,131 @@
+﻿{
+    "Items": [
+        {
+            "recommended_action": {
+                "S": "Scale up instance type or optimize resource utilization"
+            },
+            "summary": {
+                "S": "High CPU usage detected on instance i-0cd673687a3cf9c0f, potentially causing performance issues."
+            },
+            "instance_id": {
+                "S": "i-0cd673687a3cf9c0f"
+            },
+            "cost_impact": {
+                "S": "$100-$500"
+            },
+            "resolved": {
+                "BOOL": true
+            },
+            "resolved_at": {
+                "S": "2026-06-08T12:40:25.361141+00:00"
+            },
+            "timestamp": {
+                "S": "2026-06-08T12:36:43.589761+00:00"
+            },
+            "metrics_snapshot": {
+                "S": "{\"instance_id\": \"i-0cd673687a3cf9c0f\", \"timestamp\": \"2026-06-08T12:31:00+00:00\", \"cpu_avg\": 7.36, \"cpu_max\": 14.72, \"collected_at\": \"2026-06-08T12:36:39.849164\"}"
+            },
+            "likely_cause": {
+                "S": "Resource-intensive workloads or insufficient instance type"
+            },
+            "severity": {
+                "S": "medium"
+            }
+        },
+        {
+            "recommended_action": {
+                "S": "Scale up instance type or optimize resource utilization"
+            },
+            "summary": {
+                "S": "High CPU usage detected on EC2 instance i-0cd673687a3cf9c0f, potentially causing performance issues."
+            },
+            "instance_id": {
+                "S": "i-0cd673687a3cf9c0f"
+            },
+            "cost_impact": {
+                "S": "$100-$500, depending on instance type and usage"
+            },
+            "resolved": {
+                "BOOL": true
+            },
+            "resolved_at": {
+                "S": "2026-06-08T13:58:13.256696+00:00"
+            },
+            "timestamp": {
+                "S": "2026-06-08T12:51:44.017995+00:00"
+            },
+            "metrics_snapshot": {
+                "S": "{\"instance_id\": \"i-0cd673687a3cf9c0f\", \"timestamp\": \"2026-06-08T12:46:00+00:00\", \"cpu_avg\": 100.0, \"cpu_max\": 100.0, \"collected_at\": \"2026-06-08T12:51:39.644747\"}"
+            },
+            "likely_cause": {
+                "S": "Resource-intensive workload or insufficient instance type"
+            },
+            "severity": {
+                "S": "high"
+            }
+        },
+        {
+            "recommended_action": {
+                "S": "Monitor system logs and adjust resource allocation or terminate the process if necessary"
+            },
+            "summary": {
+                "S": "High CPU usage detected on instance i-0cd673687a3cf9c0f"
+            },
+            "instance_id": {
+                "S": "i-0cd673687a3cf9c0f"
+            },
+            "cost_impact": {
+                "S": "$0 - $10"
+            },
+            "resolved": {
+                "BOOL": true
+            },
+            "resolved_at": {
+                "S": "2026-06-08T18:07:43.236807+00:00"
+            },
+            "timestamp": {
+                "S": "2026-06-08T14:36:43.400635+00:00"
+            },
+            "metrics_snapshot": {
+                "S": "{\"instance_id\": \"i-0cd673687a3cf9c0f\", \"timestamp\": \"2026-06-08T14:31:00+00:00\", \"cpu_avg\": 0.17, \"cpu_max\": 0.22, \"collected_at\": \"2026-06-08T14:36:39.829455\"}"
+            },
+            "likely_cause": {
+                "S": "Potential resource-intensive process or application running on the instance"
+            },
+            "severity": {
+                "S": "low"
+            }
+        },
+        {
+            "event_type": {
+                "S": "security"
+            },
+            "recommended_action": {
+                "S": "Auto-reverted by Cloud Guardian"
+            },
+            "summary": {
+                "S": "Security event: Port 22 opened to 0.0.0.0/0 on sg-0726e338fe77e9e04"
+            },
+            "instance_id": {
+                "S": "sg-0726e338fe77e9e04"
+            },
+            "revert_seconds": {
+                "NULL": true
+            },
+            "reverted": {
+                "BOOL": true
+            },
+            "cost_impact": {
+                "S": "No cost impact"
+            },
+            "resolved": {
+                "BOOL": true
+            },
+            "timestamp": {
+                "S": "2026-06-12T14:15:06.694840+00:00"
+            },
+            "account_id": {
+                "S": "121205961581"
+            },
+            "likely_cause": {
+                "S": 

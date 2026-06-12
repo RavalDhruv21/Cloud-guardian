@@ -1,1 +1,1 @@
-{"errorMessage": "Unable to import module 'handler': No module named 'dotenv'", "errorType": "Runtime.ImportModuleError", "requestId": "", "stackTrace": []}
+{"statusCode": 200, "body": "Manual scan complete"}
