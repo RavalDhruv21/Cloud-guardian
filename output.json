@@ -1,1 +1,1 @@
-{"errorMessage": "Unable to import module 'handler': No module named 'requests'", "errorType": "Runtime.ImportModuleError", "requestId": "", "stackTrace": []}
+{"errorMessage": "Handler 'main' missing on module 'handler'", "errorType": "Runtime.HandlerNotFound", "requestId": "", "stackTrace": []}
