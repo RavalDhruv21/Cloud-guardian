@@ -50,6 +50,7 @@ jobs:
           deploy_lambda collector cloud-guardian-collector
           deploy_lambda ai_analyzer cloud-guardian-ai-analyzer
           deploy_lambda cost_optimizer cloud-guardian-cost-optimizer
+          deploy_lambda remediation cloud-guardian-remediation
           deploy_lambda report_generator cloud-guardian-report-generator
           deploy_lambda api cloud-guardian-api
 
