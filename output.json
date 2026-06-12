@@ -1,1 +1,1 @@
-{"statusCode": 200, "body": "Manual scan complete"}
+{"errorMessage": "Unable to import module 'handler': No module named 'requests'", "errorType": "Runtime.ImportModuleError", "requestId": "", "stackTrace": []}
