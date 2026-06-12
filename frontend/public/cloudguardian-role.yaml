@@ -54,7 +54,7 @@ Resources:
   CloudGuardianMonitorRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: CloudGuardianMonitorRole
+      RoleName: CloudGuardianMonitorRoles
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
