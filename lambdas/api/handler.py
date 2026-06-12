@@ -31,16 +31,18 @@ def response(status_code, body):
     }
 
 # ── Cross-account role assumption ─────────────────────────
-def get_user_role_arn(user_id='default-user'):
+def get_user_role_arn(user_id='default-user', request_region=None):
     """Get the connected account's role ARN from DynamoDB"""
     try:
         table = dynamodb.Table('cloud-guardian-users')
         result = table.get_item(Key={'user_id': user_id})
         item = result.get('Item', {})
-        return item.get('role_arn'), item.get('region', 'us-east-1'), item.get('account_id')
+        # Prefer region from request (topbar) over saved region
+        region = request_region or item.get('region', 'us-east-1')
+        return item.get('role_arn'), region, item.get('account_id')
     except Exception as e:
         print(f"Error getting user role: {e}")
-        return None, 'us-east-1', None
+        return None, request_region or 'us-east-1', None
 
 def get_assumed_client(service, role_arn=None, region='us-east-1'):
     """
@@ -126,8 +128,7 @@ def get_instance_metrics_history(instance_id, region='us-east-1', hours=2):
     try:
         from datetime import timedelta
         # Use user's cross-account role for CloudWatch
-        role_arn, user_region, _ = get_user_role_arn()
-        effective_region = region or user_region
+        role_arn, effective_region, _ = get_user_role_arn(request_region=region)
         cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
 
         end_time = datetime.now(timezone.utc)
@@ -392,8 +393,7 @@ def get_connected_account(user_id='default-user'):
 def get_live_metrics(region='us-east-1'):
     """Fetch real EC2 instances directly from user's account via assumed role"""
     try:
-        role_arn, user_region, account_id = get_user_role_arn()
-        effective_region = region or user_region
+        role_arn, effective_region, account_id = get_user_role_arn(request_region=region)
 
         ec2 = get_assumed_client('ec2', role_arn, effective_region)
         cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
@@ -444,8 +444,8 @@ def get_live_metrics(region='us-east-1'):
 # ── GET /audit-logs ────────────────────────────────────────
 def get_audit_logs(region='us-east-1'):
     try:
-        role_arn, user_region, _ = get_user_role_arn()
-        effective_region = region or user_region
+        role_arn, effective_region, _ = get_user_role_arn(request_region=region)
+        
         cloudtrail = get_assumed_client('cloudtrail', role_arn, effective_region)
 
         result = cloudtrail.lookup_events(MaxResults=50)
