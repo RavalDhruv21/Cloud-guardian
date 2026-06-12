@@ -1,7 +1,56 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Cloud Guardian Monitor Role — read-only access for infrastructure monitoring
+Description: Cloud Guardian Monitor Role — full access for infrastructure monitoring and auto-remediation
 
 Resources:
+
+  # ── S3 Bucket for CloudTrail logs ─────────────────────────
+  CloudGuardianTrailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'cloud-guardian-trail-${AWS::AccountId}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldLogs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # ── S3 Bucket Policy for CloudTrail ───────────────────────
+  CloudGuardianTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudGuardianTrailBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt CloudGuardianTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub '${CloudGuardianTrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*'
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  # ── CloudTrail ─────────────────────────────────────────────
+  CloudGuardianTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CloudGuardianTrailBucketPolicy
+    Properties:
+      TrailName: cloud-guardian-trail
+      S3BucketName: !Ref CloudGuardianTrailBucket
+      IsLogging: true
+      IncludeGlobalServiceEvents: true
+      IsMultiRegionTrail: false
+      EnableLogFileValidation: true
+
+  # ── IAM Role ───────────────────────────────────────────────
   CloudGuardianMonitorRole:
     Type: AWS::IAM::Role
     Properties:
@@ -14,26 +63,78 @@ Resources:
               AWS: !Sub 'arn:aws:iam::808715035605:root'
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: CloudGuardianReadOnly
+        - PolicyName: CloudGuardianFullAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # CloudWatch — read metrics
               - Effect: Allow
                 Action:
                   - cloudwatch:GetMetricStatistics
                   - cloudwatch:ListMetrics
                   - cloudwatch:GetMetricData
+                Resource: '*'
+              # EC2 — read + remediation actions
+              - Effect: Allow
+                Action:
                   - ec2:DescribeInstances
                   - ec2:DescribeVolumes
                   - ec2:DescribeAddresses
                   - ec2:DescribeSecurityGroups
+                  - ec2:StopInstances
+                  - ec2:StartInstances
+                  - ec2:ModifyInstanceAttribute
+                  - ec2:DeleteVolume
+                  - ec2:ReleaseAddress
+                  - ec2:RevokeSecurityGroupIngress
+                Resource: '*'
+              # RDS — read + stop/start
+              - Effect: Allow
+                Action:
                   - rds:DescribeDBInstances
-                  - ce:GetCostAndUsage
+                  - rds:StopDBInstance
+                  - rds:StartDBInstance
+                Resource: '*'
+              # S3 — read + public access block
+              - Effect: Allow
+                Action:
                   - s3:ListAllMyBuckets
+                  - s3:GetPublicAccessBlock
+                  - s3:PutPublicAccessBlock
+                  - s3:GetBucketAcl
+                Resource: '*'
+              # CloudTrail — read audit logs
+              - Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                  - cloudtrail:GetTrailStatus
+                  - cloudtrail:DescribeTrails
+                Resource: '*'
+              # Cost Explorer
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:GetCostForecast
+                Resource: '*'
+              # Lambda — list only
+              - Effect: Allow
+                Action:
                   - lambda:ListFunctions
+                Resource: '*'
+              # STS — required for role validation
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                  - sts:GetCallerIdentity
                 Resource: '*'
 
 Outputs:
   RoleArn:
     Description: Copy this ARN and paste it into Cloud Guardian
     Value: !GetAtt CloudGuardianMonitorRole.Arn
+  TrailArn:
+    Description: CloudTrail ARN created for audit logging
+    Value: !GetAtt CloudGuardianTrail.Arn
+  AccountId:
+    Description: Your AWS Account ID
+    Value: !Ref AWS::AccountId
