@@ -165,15 +165,14 @@ def get_instance_metrics_history(instance_id, region='us-east-1', hours=2):
 
 # ── GET /anomalies ─────────────────────────────────────────
 def get_anomalies(query_params=None):
-    # Get user's account_id to filter their anomalies
     _, _, account_id = get_user_role_arn()
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     result = table.scan()
     items = result.get('Items', [])
 
-    # Filter by user's account if available
+    # Strictly filter by account_id only
     if account_id:
-        items = [i for i in items if i.get('account_id') == account_id or not i.get('account_id')]
+        items = [i for i in items if i.get('account_id') == account_id]
 
     if query_params:
         severity = query_params.get('severity')
