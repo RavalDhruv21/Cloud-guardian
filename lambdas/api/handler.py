@@ -32,11 +32,13 @@ def response(status_code, body):
 
 # ── Cross-account role assumption ─────────────────────────
 def get_user_role_arn(user_id='default-user', request_region=None):
-    """Get the connected account's role ARN from DynamoDB — keyed by user_id"""
     try:
         table = dynamodb.Table('cloud-guardian-users')
         result = table.get_item(Key={'user_id': user_id})
-        item = result.get('Item', {})
+        item = result.get('Item')
+        if not item:
+            # No account connected for this user
+            return None, request_region or 'us-east-1', None
         region = request_region or item.get('region', 'us-east-1')
         return item.get('role_arn'), region, item.get('account_id')
     except Exception as e:
