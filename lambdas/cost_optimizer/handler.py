@@ -220,7 +220,7 @@ def scan_account(role_arn, region, account_id, user_id):
     except Exception as e:
         print(f"EIP scan error: {e}")
 
-def handler(event, context):
+def main(event, context):
     users = get_all_users()
     print(f"Cost scan for {len(users)} connected accounts")
 
