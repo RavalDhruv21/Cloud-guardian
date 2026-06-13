@@ -113,6 +113,8 @@ def get_metrics(account_id=None, region=None):
     table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
     result = table.scan()
     items = result.get('Items', [])
+    if not account_id:
+        return response(200, {'metrics': [], 'account_id': None})
     if account_id:
         items = [i for i in items if i.get('account_id') == account_id]
     if region:
@@ -148,6 +150,8 @@ def get_anomalies(query_params=None, user_id='default-user'):
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     result = table.scan()
     items = result.get('Items', [])
+    if not account_id:
+        return response(200, {'anomalies': []})
     if account_id:
         items = [i for i in items if i.get('account_id') == account_id]
     if query_params:
@@ -181,6 +185,8 @@ def get_cost_suggestions(query_params=None, user_id='default-user'):
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
     result = table.scan()
     items = result.get('Items', [])
+    if not account_id:
+        return response(200, {'suggestions': []})
     if account_id:
         items = [i for i in items if i.get('account_id') == account_id]
     items = [i for i in items if i.get('status') != 'dismissed']
@@ -211,6 +217,8 @@ def get_security_events(query_params=None, user_id='default-user'):
     result = table.scan()
     items = result.get('Items', [])
     security = [i for i in items if i.get('event_type') in ['security', 'remediation']]
+    if not account_id:
+        return response(200, {'events': []})
     if account_id:
         security = [i for i in security if i.get('account_id') == account_id]
     security.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
@@ -339,6 +347,8 @@ def get_connected_account(user_id='default-user'):
 def get_live_metrics(region='us-east-1', user_id='default-user'):
     try:
         role_arn, effective_region, account_id = get_user_role_arn(user_id=user_id, request_region=region)
+        if not account_id:
+            return response(200, {'metrics': [], 'account_id': None})
         ec2 = get_assumed_client('ec2', role_arn, effective_region)
         cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
         from datetime import timedelta
@@ -374,7 +384,9 @@ def get_live_metrics(region='us-east-1', user_id='default-user'):
 # ── GET /audit-logs ────────────────────────────────────────
 def get_audit_logs(region='us-east-1', user_id='default-user'):
     try:
-        role_arn, effective_region, _ = get_user_role_arn(user_id=user_id, request_region=region)
+        role_arn, effective_region, account_id = get_user_role_arn(user_id=user_id, request_region=region)
+        if not account_id:
+            return response(200, {'logs': []})
         cloudtrail = get_assumed_client('cloudtrail', role_arn, effective_region)
         result = cloudtrail.lookup_events(MaxResults=50)
         events = []
