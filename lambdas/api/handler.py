@@ -227,11 +227,12 @@ def get_security_events(query_params=None, user_id='default-user'):
 # ── GET /reports ───────────────────────────────────────────
 def get_reports(user_id='default-user'):
     _, _, account_id = get_user_role_arn(user_id=user_id)
+    if not account_id:
+        return response(200, {'reports': []})
     s3 = boto3.client('s3', region_name='us-east-1')
     bucket = os.getenv('S3_BUCKET_NAME')
     try:
-        # Look in account-specific folder first, then root reports folder
-        prefix = f'reports/{account_id}/' if account_id else 'reports/'
+        prefix = f'reports/{account_id}/'
         result = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
         objects = result.get('Contents', [])
         reports = []
