@@ -136,7 +136,7 @@ const ToggleRow = ({ label, desc, value, onChange }: any) => (
   }}>
     <div>
       <div style={{fontSize: 13, fontWeight: 600, color: '#fff'}}>{label}</div>
-      <div style={{fontSize: 12, color: 'rgba(255,255,255,0.5)', mt: 4}}>{desc}</div>
+      <div style={{fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 4}}>{desc}</div>
     </div>
     <Toggle value={value} onChange={onChange}/>
   </div>

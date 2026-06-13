@@ -279,7 +279,7 @@ export default function MetricsPage() {
                   <Tooltip
                     contentStyle={{fontSize: 12, background: 'rgba(5,11,24,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff'}}
                     itemStyle={{color: '#fff'}}
-                    formatter={(v: number) => [`${v.toFixed(1)}%`, 'CPU']}
+                    formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '0%', 'CPU']}
                   />
                   <Line
                     type="monotone"          // ← keep as monotone for smooth curves
@@ -353,7 +353,7 @@ export default function MetricsPage() {
                     <Tooltip
                       contentStyle={{fontSize: 11, background: 'rgba(5,11,24,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff'}}
                       itemStyle={{color: '#fff'}}
-                      formatter={(v: number) => [`${v.toFixed(1)}%`, 'Memory']}
+                      formatter={(v) => [v != null ? `${Number(v).toFixed(1)}%` : '0%', 'CPU']}
                     />
                     <Line
                       type="monotone"
