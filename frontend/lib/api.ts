@@ -9,6 +9,17 @@ const api = axios.create({
   }
 })
 
+export const getUserId = (): string => {
+  try {
+    const token = localStorage.getItem('cg_token')
+    if (!token) return 'default-user'
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return payload.sub || 'default-user'
+  } catch {
+    return 'default-user'
+  }
+}
+
 // Add auth token to every request
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('auth_token')

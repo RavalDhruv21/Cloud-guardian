@@ -23,35 +23,61 @@ export default function AuthCallbackPage() {
       const clientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID
       const redirect = 'http://localhost:3000/auth/callback'
 
-      const res = await fetch(`https://${domain}/oauth2/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: clientId!,
-          code,
-          redirect_uri: redirect,
-        }),
+      const body = new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId!,
+        code,
+        redirect_uri: redirect,
       })
 
+        const res = await fetch('/api/auth/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      })
+
+      if (!res.ok) {
+        const errText = await res.text()
+        console.error('Token exchange failed:', errText)
+        setStatus(`Token exchange failed: ${errText}`)
+        setTimeout(() => router.push('/login'), 3000)
+        return
+      }
+
       const tokens = await res.json()
+      console.log('Tokens received:', Object.keys(tokens))
 
       if (!tokens.access_token) {
-        setStatus('Authentication failed — redirecting to login...')
-        setTimeout(() => router.push('/login'), 2000)
+        console.log('Token response:', tokens)
+        setStatus(`No access token: ${tokens.error || 'unknown error'}`)
+        setTimeout(() => router.push('/login'), 3000)
         return
       }
 
       // Decode ID token to get user info
       const idToken = tokens.id_token
       const payload = JSON.parse(atob(idToken.split('.')[1]))
+      console.log('User payload:', payload)
 
-      const name = payload.name || payload.email.split('@')[0]
-      const email = payload.email
+      // Cognito sometimes puts email in different fields
+      const email = payload.email || payload['cognito:username'] || payload.sub
+      const name = payload.name || payload.given_name || email?.split('@')[0] || 'User'
 
-      // Save to localStorage same as email/password login
       localStorage.setItem('cg_token', tokens.access_token)
       localStorage.setItem('cg_user', JSON.stringify({ name, email }))
+
+      // Save session in same format as email/password login
+      const googleUser = {
+        id: payload.sub,
+        name,
+        email,
+        createdAt: new Date().toISOString()
+      }
+      localStorage.setItem('cg_session', JSON.stringify(googleUser))
+      // Set cookie so middleware allows dashboard access
+      document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
 
       const existingProfile = JSON.parse(localStorage.getItem('cg_user_profile') || '{}')
       localStorage.setItem('cg_user_profile', JSON.stringify({
@@ -62,14 +88,13 @@ export default function AuthCallbackPage() {
       }))
 
       window.dispatchEvent(new Event('profile-updated'))
-
-      setStatus('Signed in successfully! Redirecting...')
+      setStatus('Signed in! Redirecting to dashboard...')
       router.push('/dashboard')
 
     } catch (err) {
       console.error('Auth callback error:', err)
-      setStatus('Something went wrong — redirecting to login...')
-      setTimeout(() => router.push('/login'), 2000)
+      setStatus(`Error: ${err}`)
+      setTimeout(() => router.push('/login'), 3000)
     }
   }
 

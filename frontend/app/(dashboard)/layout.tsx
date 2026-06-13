@@ -76,6 +76,7 @@ export default function DashboardLayout({
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [awsConnected, setAwsConnected] = useState(false)
+  const [connectedAccountId, setConnectedAccountId] = useState<string>('')
 
   // Auth guard — redirect to login if not authenticated
   useEffect(() => {
@@ -115,6 +116,7 @@ export default function DashboardLayout({
     const updateProfileAndAWS = () => {
       setProfile(getStoredProfile())
       setAwsConnected(localStorage.getItem('aws_connected') === 'true')
+      setConnectedAccountId(localStorage.getItem('connected_account_id') || '')
     }
     updateProfileAndAWS()
     window.addEventListener('profile-updated', updateProfileAndAWS)
@@ -465,7 +467,7 @@ export default function DashboardLayout({
                 className="flex items-center gap-2 text-xs font-medium px-4 py-1.5 rounded-full"
                 style={{background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.1)'}}
               >
-                <span>Account #{profile.aws_account_id || process.env.NEXT_PUBLIC_AWS_ACCOUNT_ID || '—'}</span>
+                <span>Account #{connectedAccountId || profile.aws_account_id || '—'}</span>
               </div>
             )}
           </div>

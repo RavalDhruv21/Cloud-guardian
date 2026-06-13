@@ -69,6 +69,10 @@ export const logoutUser = () => {
   if (typeof window === 'undefined') return
   localStorage.removeItem(SESSION_KEY)
   localStorage.removeItem('cg_user_profile')
+  localStorage.removeItem('aws_connected')
+  localStorage.removeItem('connected_account_id')
+  localStorage.removeItem('cg_token')
+  localStorage.removeItem('cg_user')
   // Properly expire the cookie
   document.cookie = 'cg_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
   window.location.href = '/'

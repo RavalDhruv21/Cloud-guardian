@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { getUserId } from '@/lib/api'
 
 const steps = [
   {
@@ -50,11 +51,11 @@ export default function ConnectAWSPage() {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          role_arn: roleArn,
-          nickname: nickname || 'My AWS Account',
-          region,
-          user_id: token || 'default-user', // use token as user_id for multi-user
-        })
+        role_arn: roleArn,
+        nickname: nickname || 'My AWS Account',
+        region,
+        user_id: getUserId(),
+      })
       })
 
       const data = await res.json()
