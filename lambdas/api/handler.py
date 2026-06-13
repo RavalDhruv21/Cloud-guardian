@@ -32,23 +32,18 @@ def response(status_code, body):
 
 # ── Cross-account role assumption ─────────────────────────
 def get_user_role_arn(user_id='default-user', request_region=None):
-    """Get the connected account's role ARN from DynamoDB"""
+    """Get the connected account's role ARN from DynamoDB — keyed by user_id"""
     try:
         table = dynamodb.Table('cloud-guardian-users')
         result = table.get_item(Key={'user_id': user_id})
         item = result.get('Item', {})
-        # Prefer region from request (topbar) over saved region
         region = request_region or item.get('region', 'us-east-1')
         return item.get('role_arn'), region, item.get('account_id')
     except Exception as e:
-        print(f"Error getting user role: {e}")
+        print(f"Error getting user role for {user_id}: {e}")
         return None, request_region or 'us-east-1', None
 
 def get_assumed_client(service, role_arn=None, region='us-east-1'):
-    """
-    Returns a boto3 client that uses the user's cross-account role.
-    Falls back to Lambda's own credentials if no role_arn.
-    """
     if not role_arn:
         return boto3.client(service, region_name=region)
     try:
@@ -60,8 +55,7 @@ def get_assumed_client(service, role_arn=None, region='us-east-1'):
         )
         creds = assumed['Credentials']
         return boto3.client(
-            service,
-            region_name=region,
+            service, region_name=region,
             aws_access_key_id=creds['AccessKeyId'],
             aws_secret_access_key=creds['SecretAccessKey'],
             aws_session_token=creds['SessionToken']
@@ -71,43 +65,44 @@ def get_assumed_client(service, role_arn=None, region='us-east-1'):
         return boto3.client(service, region_name=region)
 
 # ── Cost optimizer actions ────────────────────────────────
-
 def stop_ec2(body):
-    role_arn, _, _ = get_user_role_arn()
+    user_id = body.get('user_id', 'default-user')
+    role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.stop_instances(InstanceIds=[body['instance_id']])
     return response(200, {'message': f"Stopped {body['instance_id']}"})
 
 def delete_ebs(body):
-    role_arn, _, _ = get_user_role_arn()
+    user_id = body.get('user_id', 'default-user')
+    role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.delete_volume(VolumeId=body['volume_id'])
     return response(200, {'message': f"Deleted {body['volume_id']}"})
 
 def release_eip(body):
-    role_arn, _, _ = get_user_role_arn()
+    user_id = body.get('user_id', 'default-user')
+    role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.release_address(AllocationId=body['allocation_id'])
     return response(200, {'message': f"Released {body['allocation_id']}"})
 
 def stop_rds(body):
-    role_arn, _, _ = get_user_role_arn()
+    user_id = body.get('user_id', 'default-user')
+    role_arn, _, _ = get_user_role_arn(user_id)
     rds = get_assumed_client('rds', role_arn, body.get('region', 'us-east-1'))
     rds.stop_db_instance(DBInstanceIdentifier=body['instance_id'])
     return response(200, {'message': f"Stopped RDS {body['instance_id']}"})
 
 def resize_ec2(body):
-    role_arn, _, _ = get_user_role_arn()
+    user_id = body.get('user_id', 'default-user')
+    role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     instance_id = body['instance_id']
     target_type = body.get('target_type', 't3.micro')
     ec2.stop_instances(InstanceIds=[instance_id])
     waiter = ec2.get_waiter('instance_stopped')
     waiter.wait(InstanceIds=[instance_id])
-    ec2.modify_instance_attribute(
-        InstanceId=instance_id,
-        InstanceType={'Value': target_type}
-    )
+    ec2.modify_instance_attribute(InstanceId=instance_id, InstanceType={'Value': target_type})
     ec2.start_instances(InstanceIds=[instance_id])
     return response(200, {'message': f"Resized {instance_id} to {target_type} and restarted"})
 
@@ -124,57 +119,35 @@ def get_metrics(account_id=None, region=None):
     return response(200, {'metrics': items[:50]})
 
 # ── GET /metrics/history ──────────────────────────────────
-def get_instance_metrics_history(instance_id, region='us-east-1', hours=2):
+def get_instance_metrics_history(instance_id, region='us-east-1', hours=2, user_id='default-user'):
     try:
         from datetime import timedelta
-        # Use user's cross-account role for CloudWatch
-        role_arn, effective_region, _ = get_user_role_arn(request_region=region)
+        role_arn, effective_region, _ = get_user_role_arn(user_id=user_id, request_region=region)
         cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
-
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=int(hours))
-
         result = cloudwatch.get_metric_statistics(
             Namespace='AWS/EC2',
             MetricName='CPUUtilization',
             Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-            StartTime=start_time,
-            EndTime=end_time,
-            Period=300,
-            Statistics=['Average', 'Maximum']
+            StartTime=start_time, EndTime=end_time,
+            Period=300, Statistics=['Average', 'Maximum']
         )
-
         datapoints = result.get('Datapoints', [])
         datapoints.sort(key=lambda x: x['Timestamp'])
-
-        chart_data = []
-        for dp in datapoints:
-            chart_data.append({
-                'time': dp['Timestamp'].strftime('%H:%M'),
-                'cpu': round(dp['Average'], 3),
-                'cpu_max': round(dp['Maximum'], 3),
-            })
-
-        return response(200, {
-            'history': chart_data,
-            'instance_id': instance_id,
-            'period_minutes': 5,
-            'window_hours': hours
-        })
+        chart_data = [{'time': dp['Timestamp'].strftime('%H:%M'), 'cpu': round(dp['Average'], 3), 'cpu_max': round(dp['Maximum'], 3)} for dp in datapoints]
+        return response(200, {'history': chart_data, 'instance_id': instance_id, 'period_minutes': 5, 'window_hours': hours})
     except Exception as e:
         return response(500, {'error': str(e)})
 
 # ── GET /anomalies ─────────────────────────────────────────
-def get_anomalies(query_params=None):
-    _, _, account_id = get_user_role_arn()
+def get_anomalies(query_params=None, user_id='default-user'):
+    _, _, account_id = get_user_role_arn(user_id=user_id)
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     result = table.scan()
     items = result.get('Items', [])
-
-    # Strictly filter by account_id only
     if account_id:
         items = [i for i in items if i.get('account_id') == account_id]
-
     if query_params:
         severity = query_params.get('severity')
         resolved = query_params.get('resolved')
@@ -183,7 +156,6 @@ def get_anomalies(query_params=None):
         if resolved is not None:
             is_resolved = resolved.lower() == 'true'
             items = [i for i in items if i.get('resolved', False) == is_resolved]
-
     items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'anomalies': items})
 
@@ -197,20 +169,16 @@ def resolve_anomaly(body):
     table.update_item(
         Key={'instance_id': instance_id, 'timestamp': timestamp},
         UpdateExpression='SET resolved = :r, resolved_at = :t',
-        ExpressionAttributeValues={
-            ':r': True,
-            ':t': datetime.now(timezone.utc).isoformat()
-        }
+        ExpressionAttributeValues={':r': True, ':t': datetime.now(timezone.utc).isoformat()}
     )
     return response(200, {'message': 'Anomaly marked as resolved'})
 
 # ── GET /cost-suggestions ──────────────────────────────────
-def get_cost_suggestions(query_params=None):
-    _, _, account_id = get_user_role_arn()
+def get_cost_suggestions(query_params=None, user_id='default-user'):
+    _, _, account_id = get_user_role_arn(user_id=user_id)
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
     result = table.scan()
     items = result.get('Items', [])
-    # Filter by user's account_id
     if account_id:
         items = [i for i in items if i.get('account_id') == account_id]
     items = [i for i in items if i.get('status') != 'dismissed']
@@ -235,38 +203,32 @@ def dismiss_suggestion(body):
     return response(200, {'message': 'Suggestion dismissed'})
 
 # ── GET /security-events ───────────────────────────────────
-def get_security_events(query_params=None):
-    _, _, account_id = get_user_role_arn()
+def get_security_events(query_params=None, user_id='default-user'):
+    _, _, account_id = get_user_role_arn(user_id=user_id)
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     result = table.scan()
     items = result.get('Items', [])
     security = [i for i in items if i.get('event_type') in ['security', 'remediation']]
     if account_id:
-        security = [i for i in security if i.get('account_id') == account_id or not i.get('account_id')]
+        security = [i for i in security if i.get('account_id') == account_id]
     security.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'events': security})
 
 # ── GET /reports ───────────────────────────────────────────
-def get_reports():
+def get_reports(user_id='default-user'):
+    _, _, account_id = get_user_role_arn(user_id=user_id)
     s3 = boto3.client('s3', region_name='us-east-1')
     bucket = os.getenv('S3_BUCKET_NAME')
     try:
-        result = s3.list_objects_v2(Bucket=bucket, Prefix='reports/')
+        # Look in account-specific folder first, then root reports folder
+        prefix = f'reports/{account_id}/' if account_id else 'reports/'
+        result = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
         objects = result.get('Contents', [])
         reports = []
         for obj in objects:
             key = obj['Key']
-            url = s3.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': bucket, 'Key': key},
-                ExpiresIn=3600
-            )
-            reports.append({
-                'key': key,
-                'date': obj['LastModified'].isoformat(),
-                'url': url,
-                'size': obj['Size']
-            })
+            url = s3.generate_presigned_url('get_object', Params={'Bucket': bucket, 'Key': key}, ExpiresIn=3600)
+            reports.append({'key': key, 'date': obj['LastModified'].isoformat(), 'url': url, 'size': obj['Size']})
         reports.sort(key=lambda x: x['date'], reverse=True)
         return response(200, {'reports': reports})
     except Exception as e:
@@ -287,10 +249,10 @@ def ask_agent(body):
     import requests as req
     message = body.get('message', '')
     context = body.get('context', {})
+    user_id = body.get('user_id', 'default-user')
     groq_key = os.getenv('GROQ_API_KEY')
 
-    # Get user's account info for context
-    role_arn, region, account_id = get_user_role_arn()
+    role_arn, region, account_id = get_user_role_arn(user_id=user_id)
 
     metrics_table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
     anomalies_table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
@@ -298,7 +260,6 @@ def ask_agent(body):
     recent_metrics = metrics_table.scan(Limit=10).get('Items', [])
     recent_anomalies = anomalies_table.scan(Limit=5).get('Items', [])
 
-    # Filter by user's account
     if account_id:
         recent_metrics = [m for m in recent_metrics if m.get('account_id') == account_id]
         recent_anomalies = [a for a in recent_anomalies if a.get('account_id') == account_id]
@@ -310,9 +271,7 @@ Current account state (Account: {account_id or 'unknown'}, Region: {region}):
 - Recent metrics: {json.dumps(recent_metrics, cls=DecimalEncoder)[:500]}
 - Unresolved anomalies: {json.dumps(unresolved, cls=DecimalEncoder)[:500]}
 - Additional context: {json.dumps(context)[:200]}
-
-Answer questions specifically about their infrastructure. Be concise and actionable.
-Keep responses under 150 words unless more detail is needed."""
+Answer questions specifically about their infrastructure. Be concise and actionable."""
 
     groq_response = req.post(
         'https://api.groq.com/openai/v1/chat/completions',
@@ -323,11 +282,9 @@ Keep responses under 150 words unless more detail is needed."""
                 {'role': 'system', 'content': system_prompt},
                 {'role': 'user', 'content': message}
             ],
-            'temperature': 0.3,
-            'max_tokens': 400
+            'temperature': 0.3, 'max_tokens': 400
         }
     )
-
     ai_text = groq_response.json()['choices'][0]['message']['content']
     return response(200, {'reply': ai_text})
 
@@ -340,17 +297,10 @@ def connect_account(body):
 
     if not role_arn:
         return response(400, {'error': 'role_arn required'})
-
     try:
         sts = boto3.client('sts')
-        assumed = sts.assume_role(
-            RoleArn=role_arn,
-            RoleSessionName='CloudGuardianValidation',
-            DurationSeconds=900
-        )
+        assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName='CloudGuardianValidation', DurationSeconds=900)
         account_id = assumed['AssumedRoleUser']['Arn'].split(':')[4]
-
-        # Save to DynamoDB — keyed by user_id so each user has their own account
         users_table = dynamodb.Table('cloud-guardian-users')
         users_table.put_item(Item={
             'user_id': user_id,
@@ -361,24 +311,18 @@ def connect_account(body):
             'connected_at': datetime.now(timezone.utc).isoformat(),
             'status': 'active'
         })
-
-        return response(200, {
-            'message': 'Account connected successfully',
-            'account_id': account_id
-        })
+        return response(200, {'message': 'Account connected successfully', 'account_id': account_id})
     except Exception as e:
         return response(400, {'error': f'Could not assume role: {str(e)}'})
 
 # ── GET /accounts/me ───────────────────────────────────────
 def get_connected_account(user_id='default-user'):
-    """Return the currently connected account info"""
     try:
         table = dynamodb.Table('cloud-guardian-users')
         result = table.get_item(Key={'user_id': user_id})
         item = result.get('Item')
         if not item:
             return response(404, {'error': 'No account connected'})
-        # Don't expose role_arn in response
         return response(200, {
             'account_id': item.get('account_id'),
             'nickname': item.get('nickname'),
@@ -390,45 +334,30 @@ def get_connected_account(user_id='default-user'):
         return response(500, {'error': str(e)})
 
 # ── GET /live-metrics ──────────────────────────────────────
-def get_live_metrics(region='us-east-1'):
-    """Fetch real EC2 instances directly from user's account via assumed role"""
+def get_live_metrics(region='us-east-1', user_id='default-user'):
     try:
-        role_arn, effective_region, account_id = get_user_role_arn(request_region=region)
-
+        role_arn, effective_region, account_id = get_user_role_arn(user_id=user_id, request_region=region)
         ec2 = get_assumed_client('ec2', role_arn, effective_region)
         cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
-
         from datetime import timedelta
-        instances_resp = ec2.describe_instances(
-            Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
-        )
-
+        instances_resp = ec2.describe_instances(Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
         live_data = []
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=1)
-
         for reservation in instances_resp['Reservations']:
             for inst in reservation['Instances']:
                 instance_id = inst['InstanceId']
-                instance_type = inst['InstanceType']
-
-                # Get CPU from CloudWatch
                 cw_result = cloudwatch.get_metric_statistics(
-                    Namespace='AWS/EC2',
-                    MetricName='CPUUtilization',
+                    Namespace='AWS/EC2', MetricName='CPUUtilization',
                     Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-                    StartTime=start_time,
-                    EndTime=end_time,
-                    Period=300,
-                    Statistics=['Average', 'Maximum']
+                    StartTime=start_time, EndTime=end_time, Period=300, Statistics=['Average', 'Maximum']
                 )
                 datapoints = cw_result.get('Datapoints', [])
                 cpu_avg = round(sum(d['Average'] for d in datapoints) / len(datapoints), 3) if datapoints else 0
                 cpu_max = round(max(d['Maximum'] for d in datapoints), 3) if datapoints else 0
-
                 live_data.append({
                     'instance_id': instance_id,
-                    'instance_type': instance_type,
+                    'instance_type': inst['InstanceType'],
                     'account_id': account_id,
                     'region': effective_region,
                     'cpu_avg': cpu_avg,
@@ -436,18 +365,15 @@ def get_live_metrics(region='us-east-1'):
                     'timestamp': datetime.now(timezone.utc).isoformat(),
                     'state': inst['State']['Name'],
                 })
-
         return response(200, {'metrics': live_data, 'account_id': account_id, 'region': effective_region})
     except Exception as e:
         return response(500, {'error': str(e)})
 
 # ── GET /audit-logs ────────────────────────────────────────
-def get_audit_logs(region='us-east-1'):
+def get_audit_logs(region='us-east-1', user_id='default-user'):
     try:
-        role_arn, effective_region, _ = get_user_role_arn(request_region=region)
-        
+        role_arn, effective_region, _ = get_user_role_arn(user_id=user_id, request_region=region)
         cloudtrail = get_assumed_client('cloudtrail', role_arn, effective_region)
-
         result = cloudtrail.lookup_events(MaxResults=50)
         events = []
         for event in result.get('Events', []):
@@ -487,26 +413,30 @@ def main(event, context):
 
     print(f"{method} {path}")
 
+    # Extract common params
+    user_id = query.get('user_id', body.get('user_id', 'default-user'))
+    request_region = query.get('region', 'us-east-1')
+
     routes = {
-        ('GET',  '/metrics/history'):          lambda: get_instance_metrics_history(query.get('instance_id', ''), query.get('region', 'us-east-1')),
-        ('GET',  '/metrics'):                  lambda: get_metrics(query.get('account_id'), query.get('region')),
-        ('GET',  '/live-metrics'):             lambda: get_live_metrics(query.get('region', 'us-east-1')),
-        ('GET',  '/anomalies'):                lambda: get_anomalies(query),
+        ('GET',  '/metrics/history'):          lambda: get_instance_metrics_history(query.get('instance_id', ''), request_region, query.get('hours', 2), user_id),
+        ('GET',  '/metrics'):                  lambda: get_metrics(query.get('account_id'), request_region),
+        ('GET',  '/live-metrics'):             lambda: get_live_metrics(request_region, user_id),
+        ('GET',  '/anomalies'):                lambda: get_anomalies(query, user_id),
         ('POST', '/anomalies/resolve'):        lambda: resolve_anomaly(body),
-        ('GET',  '/cost-suggestions'):         lambda: get_cost_suggestions(query),
+        ('GET',  '/cost-suggestions'):         lambda: get_cost_suggestions(query, user_id),
         ('POST', '/cost-suggestions/dismiss'): lambda: dismiss_suggestion(body),
         ('POST', '/ec2/stop'):                 lambda: stop_ec2(body),
         ('POST', '/ebs/delete'):               lambda: delete_ebs(body),
         ('POST', '/eip/release'):              lambda: release_eip(body),
         ('POST', '/rds/stop'):                 lambda: stop_rds(body),
         ('POST', '/ec2/resize'):               lambda: resize_ec2(body),
-        ('GET',  '/security-events'):          lambda: get_security_events(query),
-        ('GET',  '/reports'):                  lambda: get_reports(),
-        ('GET',  '/reports/content'):          lambda: get_report_content(query.get('key', ''), query.get('region', 'us-east-1')),
+        ('GET',  '/security-events'):          lambda: get_security_events(query, user_id),
+        ('GET',  '/reports'):                  lambda: get_reports(user_id),
+        ('GET',  '/reports/content'):          lambda: get_report_content(query.get('key', ''), request_region),
         ('POST', '/agent'):                    lambda: ask_agent(body),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),
-        ('GET',  '/accounts/me'):              lambda: get_connected_account(query.get('user_id', 'default-user')),
-        ('GET',  '/audit-logs'):               lambda: get_audit_logs(query.get('region', 'us-east-1')),
+        ('GET',  '/accounts/me'):              lambda: get_connected_account(query.get('user_id', user_id)),
+        ('GET',  '/audit-logs'):               lambda: get_audit_logs(request_region, user_id),
     }
 
     handler = routes.get((method, path))
