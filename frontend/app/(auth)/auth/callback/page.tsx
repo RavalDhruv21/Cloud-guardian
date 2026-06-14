@@ -21,7 +21,7 @@ function AuthCallbackInner() {
     try {
       const domain = process.env.NEXT_PUBLIC_COGNITO_DOMAIN
       const clientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID
-      const redirect = 'http://localhost:3000/auth/callback'
+      const redirect = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000/auth/callback'
 
       const body = new URLSearchParams({
         grant_type: 'authorization_code',
