@@ -8,7 +8,8 @@ function AuthCallbackInner() {
   const [status, setStatus] = useState('Processing...')
 
   useEffect(() => {
-    const code = searchParams.get('code')
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
     if (!code) {
       setStatus('No auth code found — redirecting to login...')
       setTimeout(() => router.push('/login'), 2000)
