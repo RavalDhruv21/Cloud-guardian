@@ -85,7 +85,12 @@ def revert_open_port_22(sg_id, role_arn, region, account_id, user_id):
         print(f"Error reverting port 22: {e}")
     return False
 
+WHITELISTED_BUCKETS = ['cloud-guardian-4626']
+
 def revert_public_s3(bucket_name, role_arn, region, account_id, user_id):
+    if bucket_name in WHITELISTED_BUCKETS:
+        print(f"Skipping whitelisted bucket: {bucket_name}")
+        return False
     s3 = get_assumed_client('s3', role_arn, region)
     start_time = datetime.now(timezone.utc)
     try:
@@ -157,7 +162,8 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
                 config = resp['PublicAccessBlockConfiguration']
                 if not all([config.get('BlockPublicAcls'), config.get('IgnorePublicAcls'),
                             config.get('BlockPublicPolicy'), config.get('RestrictPublicBuckets')]):
-                    revert_public_s3(bucket['Name'], role_arn, region, account_id, user_id)
+                    if bucket['Name'] not in WHITELISTED_BUCKETS:
+                        revert_public_s3(bucket['Name'], role_arn, region, account_id, user_id)
                     issues += 1
             except:
                 pass

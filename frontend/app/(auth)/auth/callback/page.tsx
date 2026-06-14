@@ -30,13 +30,13 @@ function AuthCallbackInner() {
         redirect_uri: redirect,
       })
 
-        const res = await fetch('/api/auth/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: body.toString(),
-      })
+        const res = await fetch(`https://${domain}/oauth2/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: body.toString(),
+        })
 
       if (!res.ok) {
         const errText = await res.text()
