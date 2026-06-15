@@ -17,9 +17,15 @@ export const getUsers = (): AuthUser[] => {
 }
 
 // Get current logged in user
-export const getCurrentUser = (): AuthUser | null => {
+export const getCurrentUser = (): any | null => {
   if (typeof window === 'undefined') return null
   try {
+    // With Cognito, we rely on the token or the profile existing
+    const token = localStorage.getItem('cg_token')
+    const profile = localStorage.getItem('cg_user_profile')
+    if (token && profile) return JSON.parse(profile)
+    
+    // Fallback for Google auth which sets cg_session
     const session = localStorage.getItem(SESSION_KEY)
     return session ? JSON.parse(session) : null
   } catch { return null }
