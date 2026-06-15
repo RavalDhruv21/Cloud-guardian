@@ -53,40 +53,45 @@ export default function SignupPage() {
     if (!name.trim()) return setError('Full name is required')
     if (name.trim().length < 2) return setError('Name must be at least 2 characters')
     if (!isValidEmail(email)) return setError('Please enter a valid email address')
-    if (emailExists(email)) return setError('An account with this email already exists. Please sign in instead.')
-
     const passError = validatePassword(password)
     if (passError) return setError(passError)
 
     if (password !== confirmPassword) return setError('Passwords do not match')
 
     setLoading(true)
-    await new Promise(r => setTimeout(r, 800))
-
-    const user = registerUser(name.trim(), email.toLowerCase(), password)
-    if (!user) {
-      setError('Something went wrong. Please try again.')
+    const result = await registerUser(name.trim(), email.toLowerCase(), password)
+    
+    if (!result.success) {
+      // Cognito throws an error if email already exists
+      setError(result.error)
       setLoading(false)
       return
     }
 
-    // Save to profile
-    localStorage.setItem('cg_user_profile', JSON.stringify({
-      name: user.name,
-      email: user.email,
-      avatar_initials: user.name.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2),
-      timezone: 'Asia/Kolkata',
-      alert_email: true,
-      alert_slack: false,
-      aws_account_id: '',
-      aws_role_arn: '',
-      aws_region: 'us-east-1'
-    }))
-
-    // Auto login after signup
-    localStorage.setItem('cg_session', JSON.stringify(user))
-
-    router.push('/connect-aws')
+    // Attempt to auto-login to get real Cognito tokens
+    const { loginUser } = await import('@/lib/auth')
+    const loginResult = await loginUser(email.toLowerCase(), password)
+    
+    if (loginResult && loginResult.success) {
+        // Create their DynamoDB profile
+        try {
+            const { updateUserProfile } = await import('@/lib/api')
+            const avatar_initials = name.trim().split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
+            const profile = { name: name.trim(), email: email.toLowerCase(), avatar_initials, aws_connected: false, connected_account_id: '' }
+            await updateUserProfile(profile)
+            localStorage.setItem('cg_user_profile', JSON.stringify(profile))
+        } catch (err) {
+            console.error("Failed to create profile in DB:", err)
+            const avatar_initials = name.trim().split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
+            localStorage.setItem('cg_user_profile', JSON.stringify({ name: name.trim(), email: email.toLowerCase(), avatar_initials }))
+        }
+        
+        window.dispatchEvent(new Event('profile-updated'))
+        router.push('/connect-aws')
+    } else {
+        // If auto-login fails (e.g. email verification required by User Pool), redirect to login
+        router.push('/login')
+    }
   }
 
   return (

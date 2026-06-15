@@ -30,38 +30,44 @@ export const emailExists = (email: string): boolean => {
   return getUsers().some(u => u.email.toLowerCase() === email.toLowerCase())
 }
 
-// Register new user
-export const registerUser = (name: string, email: string, password: string): AuthUser | null => {
-  if (emailExists(email)) return null
-  const users = getUsers()
-  const newUser: AuthUser = {
-    id: Date.now().toString(),
-    name,
-    email,
-    createdAt: new Date().toISOString()
+import { signUp, signIn, fetchAuthSession } from 'aws-amplify/auth'
+
+// Register new user (Now using AWS Cognito)
+export const registerUser = async (name: string, email: string, password: string) => {
+  try {
+    const response = await signUp({
+      username: email,
+      password,
+      options: {
+        userAttributes: { email, name }
+      }
+    })
+    return { success: true, response }
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Signup failed' }
   }
-  // Store user with hashed password (simple hash for demo)
-  localStorage.setItem(USERS_KEY, JSON.stringify([
-    ...users,
-    { ...newUser, password: btoa(password) }
-  ]))
-  document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
-  return newUser
 }
 
-// Login user
-export const loginUser = (email: string, password: string): AuthUser | null => {
-  const users = getUsers() as any[]
-  const user = users.find(
-    u => u.email.toLowerCase() === email.toLowerCase() &&
-    u.password === btoa(password)
-  )
-  if (!user) return null
-  const { password: _, ...userWithoutPassword } = user
-  localStorage.setItem(SESSION_KEY, JSON.stringify(userWithoutPassword))
-  // Set cookie for middleware
-  document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
-  return userWithoutPassword
+// Login user (Now using AWS Cognito)
+export const loginUser = async (email: string, password: string) => {
+  try {
+    const { isSignedIn } = await signIn({ username: email, password })
+    if (!isSignedIn) return { success: false, error: 'Additional steps required (like MFA).' }
+
+    // Fetch the real tokens
+    const session = await fetchAuthSession()
+    if (session.tokens?.accessToken) {
+      localStorage.setItem('cg_token', session.tokens.accessToken.toString())
+    }
+
+    // Set cookie for middleware
+    document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
+    
+    // We will let the login page fetch the profile and handle `cg_user_profile` setting
+    return { success: true }
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Invalid email or password.' }
+  }
 }
 
 // Logout

@@ -31,23 +31,42 @@ export default function LoginPage() {
     // Simulate network delay
     await new Promise(r => setTimeout(r, 800))
 
-    const user = loginUser(email, password)
-
-    if (!user) {
-      setError('Invalid email or password. Please check your credentials or sign up.')
+    const result = await loginUser(email, password)
+    
+    if (!result || !result.success) {
+      setError(result?.error || 'Invalid email or password.')
       setLoading(false)
       return
     }
 
-    // Save to profile
-    const existingProfile = JSON.parse(localStorage.getItem('cg_user_profile') || '{}')
-    localStorage.setItem('cg_user_profile', JSON.stringify({
-      ...existingProfile,
-      name: user.name,
-      email: user.email,
-      avatar_initials: user.name.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
-    }))
+    try {
+        const { getUserProfile, updateUserProfile } = await import('@/lib/api')
+        const data = await getUserProfile()
+        
+        let profile = data.profile
+        // If the profile returned by DB has no email, create an initial one
+        if (!profile || !profile.email) {
+            const name = email.split('@')[0]
+            const avatar_initials = name.slice(0, 2).toUpperCase()
+            profile = { name, email, avatar_initials, aws_connected: false, connected_account_id: '' }
+            await updateUserProfile(profile)
+        }
+        
+        localStorage.setItem('cg_user_profile', JSON.stringify(profile))
+        
+        // Restore aws_connected state
+        if (profile.aws_connected) {
+            localStorage.setItem('aws_connected', 'true')
+            localStorage.setItem('connected_account_id', profile.connected_account_id)
+        }
+    } catch (err) {
+        console.error("Failed to sync profile from DB:", err)
+        const name = email.split('@')[0]
+        const avatar_initials = name.slice(0, 2).toUpperCase()
+        localStorage.setItem('cg_user_profile', JSON.stringify({ name, email, avatar_initials }))
+    }
 
+    window.dispatchEvent(new Event('profile-updated'))
     router.push('/dashboard')
   }
 
