@@ -68,30 +68,12 @@ export default function SignupPage() {
       return
     }
 
-    // Attempt to auto-login to get real Cognito tokens
-    const { loginUser } = await import('@/lib/auth')
-    const loginResult = await loginUser(email.toLowerCase(), password)
-    
-    if (loginResult && loginResult.success) {
-        // Create their DynamoDB profile
-        try {
-            const { updateUserProfile } = await import('@/lib/api')
-            const avatar_initials = name.trim().split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
-            const profile = { name: name.trim(), email: email.toLowerCase(), avatar_initials, aws_connected: false, connected_account_id: '' }
-            await updateUserProfile(profile)
-            localStorage.setItem('cg_user_profile', JSON.stringify(profile))
-        } catch (err) {
-            console.error("Failed to create profile in DB:", err)
-            const avatar_initials = name.trim().split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
-            localStorage.setItem('cg_user_profile', JSON.stringify({ name: name.trim(), email: email.toLowerCase(), avatar_initials }))
-        }
-        
-        window.dispatchEvent(new Event('profile-updated'))
-        router.push('/connect-aws')
-    } else {
-        // If auto-login fails (e.g. email verification required by User Pool), redirect to login
-        router.push('/login')
-    }
+    // Pass the password in state (or localStorage temporarily) so verify page can auto-login?
+    // It's safer to just ask them to login after verification, or we can stash the password briefly in sessionStorage.
+    // Let's just stash it in sessionStorage so we can auto-login them after verification!
+    sessionStorage.setItem('cg_temp_password', password)
+
+    router.push(`/verify?email=${encodeURIComponent(email.toLowerCase())}`)
   }
 
   return (

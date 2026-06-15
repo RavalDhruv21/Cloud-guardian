@@ -34,6 +34,13 @@ export default function LoginPage() {
     const result = await loginUser(email, password)
     
     if (!result || !result.success) {
+      if (result?.nextStep?.signInStep === 'CONFIRM_SIGN_UP') {
+          // Stash the password temporarily so we can auto-login them after verification!
+          sessionStorage.setItem('cg_temp_password', password)
+          router.push(`/verify?email=${encodeURIComponent(email)}`)
+          return
+      }
+      
       setError(result?.error || 'Invalid email or password.')
       setLoading(false)
       return

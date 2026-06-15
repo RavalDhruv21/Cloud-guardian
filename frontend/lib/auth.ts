@@ -51,8 +51,8 @@ export const registerUser = async (name: string, email: string, password: string
 // Login user (Now using AWS Cognito)
 export const loginUser = async (email: string, password: string) => {
   try {
-    const { isSignedIn } = await signIn({ username: email, password })
-    if (!isSignedIn) return { success: false, error: 'Additional steps required (like MFA).' }
+    const { isSignedIn, nextStep } = await signIn({ username: email, password })
+    if (!isSignedIn) return { success: false, error: 'Additional steps required.', nextStep }
 
     // Fetch the real tokens
     const session = await fetchAuthSession()
