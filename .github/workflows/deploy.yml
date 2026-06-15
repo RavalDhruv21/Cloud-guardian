@@ -83,6 +83,12 @@ jobs:
           aws s3api put-public-access-block --bucket cloud-guardian-4626 --region us-east-1 --public-access-block-configuration BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false
           aws s3api put-bucket-policy --bucket cloud-guardian-4626 --region us-east-1 --policy '{"Version":"2012-10-17","Statement":[{"Sid":"PublicRead","Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::cloud-guardian-4626/*"}]}'
 
+      - name: Update CloudFront Function
+        run: |
+          ETAG=$(aws cloudfront describe-function --name cloud-guardian-rewrite --query "ETag" --output text)
+          NEW_ETAG=$(aws cloudfront update-function --name cloud-guardian-rewrite --function-config Comment="URL rewrite for Next.js static export",Runtime="cloudfront-js-2.0" --function-code fileb://cf-function.js --if-match $ETAG --query "ETag" --output text)
+          aws cloudfront publish-function --name cloud-guardian-rewrite --if-match $NEW_ETAG
+
       - name: Invalidate CloudFront
         run: |
           aws cloudfront create-invalidation --distribution-id $(aws cloudfront list-distributions --query "DistributionList.Items[0].Id" --output text) --paths "/*"
