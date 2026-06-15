@@ -30,7 +30,7 @@ export const emailExists = (email: string): boolean => {
   return getUsers().some(u => u.email.toLowerCase() === email.toLowerCase())
 }
 
-import { signUp, signIn, fetchAuthSession } from 'aws-amplify/auth'
+import { signUp, signIn, fetchAuthSession, signOut } from 'aws-amplify/auth'
 
 // Register new user (Now using AWS Cognito)
 export const registerUser = async (name: string, email: string, password: string) => {
@@ -49,7 +49,7 @@ export const registerUser = async (name: string, email: string, password: string
 }
 
 // Login user (Now using AWS Cognito)
-export const loginUser = async (email: string, password: string) => {
+export const loginUser = async (email: string, password: string): Promise<any> => {
   try {
     const { isSignedIn, nextStep } = await signIn({ username: email, password })
     if (!isSignedIn) return { success: false, error: 'Additional steps required.', nextStep }
@@ -66,26 +66,36 @@ export const loginUser = async (email: string, password: string) => {
     // We will let the login page fetch the profile and handle `cg_user_profile` setting
     return { success: true }
   } catch (error: any) {
+    if (error.message === 'There is already a signed in user.') {
+        // Automatically clear the stuck session and try again
+        await signOut()
+        return loginUser(email, password)
+    }
     return { success: false, error: error.message || 'Invalid email or password.' }
   }
 }
 
 // Logout
-export const logoutUser = () => {
+export const logoutUser = async () => {
   if (typeof window === 'undefined') return
-  clearSession()
+  await clearSession()
   window.location.href = '/'
 }
 
 // Switch account — clears session and goes straight to login
-export const switchAccount = () => {
+export const switchAccount = async () => {
   if (typeof window === 'undefined') return
-  clearSession()
+  await clearSession()
   window.location.href = '/login'
 }
 
 // Shared session cleanup
-const clearSession = () => {
+const clearSession = async () => {
+  try {
+    await signOut()
+  } catch (e) {
+    console.error("Sign out error", e)
+  }
   localStorage.removeItem(SESSION_KEY)
   localStorage.removeItem('cg_user_profile')
   localStorage.removeItem('aws_connected')
