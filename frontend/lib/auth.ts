@@ -67,6 +67,19 @@ export const loginUser = (email: string, password: string): AuthUser | null => {
 // Logout
 export const logoutUser = () => {
   if (typeof window === 'undefined') return
+  clearSession()
+  window.location.href = '/'
+}
+
+// Switch account — clears session and goes straight to login
+export const switchAccount = () => {
+  if (typeof window === 'undefined') return
+  clearSession()
+  window.location.href = '/login'
+}
+
+// Shared session cleanup
+const clearSession = () => {
   localStorage.removeItem(SESSION_KEY)
   localStorage.removeItem('cg_user_profile')
   localStorage.removeItem('aws_connected')
@@ -75,7 +88,6 @@ export const logoutUser = () => {
   localStorage.removeItem('cg_user')
   // Properly expire the cookie
   document.cookie = 'cg_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
-  window.location.href = '/'
 }
 
 // Validate email format

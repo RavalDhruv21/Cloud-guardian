@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { getAnomalies } from '@/lib/api'
 import { getRegion, setRegion } from '@/lib/region'
-import { logoutUser, getCurrentUser } from '@/lib/auth'
+import { logoutUser, getCurrentUser, switchAccount } from '@/lib/auth'
 
 const navItems = [
   {
@@ -134,6 +134,11 @@ export default function DashboardLayout({
     logoutUser()
   }
 
+  const handleSwitchAccount = () => {
+    setShowLogoutConfirm(false)
+    switchAccount()
+  }
+
   // Show nothing while checking auth
   if (!authChecked) {
     return (
@@ -231,6 +236,34 @@ export default function DashboardLayout({
                 </div>
               </div>
             </div>
+
+            {/* Switch account button */}
+            <button
+              onClick={handleSwitchAccount}
+              className="w-full flex items-center justify-center gap-2.5 text-sm py-3 rounded-xl font-medium transition-all mb-4"
+              style={{
+                background: 'rgba(59,130,246,0.1)',
+                color: '#60A5FA',
+                border: '1px solid rgba(59,130,246,0.2)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(59,130,246,0.18)'
+                e.currentTarget.style.borderColor = 'rgba(59,130,246,0.35)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(59,130,246,0.1)'
+                e.currentTarget.style.borderColor = 'rgba(59,130,246,0.2)'
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+              Login with another account
+            </button>
 
             {/* Buttons */}
             <div className="flex gap-3">
@@ -379,6 +412,41 @@ export default function DashboardLayout({
                 </div>
               </div>
             </div>
+
+            {/* Switch account icon button */}
+            <button
+              onClick={handleSwitchAccount}
+              title="Login with another account"
+              className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all group"
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.05)',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(59,130,246,0.15)';
+                e.currentTarget.style.borderColor = 'rgba(59,130,246,0.3)';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
+              }}
+            >
+              <svg
+                width="14" height="14" viewBox="0 0 24 24"
+                fill="none"
+                stroke="rgba(255,255,255,0.6)"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="group-hover:stroke-blue-400 transition-colors"
+              >
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+            </button>
 
             {/* Logout icon button */}
             <button
