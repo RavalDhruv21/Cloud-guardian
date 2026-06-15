@@ -80,13 +80,33 @@ function AuthCallbackInner() {
       // Set cookie so middleware allows dashboard access
       document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
 
-      const existingProfile = JSON.parse(localStorage.getItem('cg_user_profile') || '{}')
-      localStorage.setItem('cg_user_profile', JSON.stringify({
-        ...existingProfile,
-        name,
-        email,
-        avatar_initials: name.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
-      }))
+      // Fetch existing profile from DynamoDB
+      try {
+        const { getUserProfile, updateUserProfile } = await import('@/lib/api')
+        const data = await getUserProfile()
+        
+        let profile = data.profile
+        // If the profile returned by DB has no email, it means it was just an empty skeleton
+        if (!profile || !profile.email) {
+            const avatar_initials = name.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
+            profile = { name, email, avatar_initials, aws_connected: false, connected_account_id: '' }
+            await updateUserProfile(profile)
+        }
+        
+        // Save fetched/created profile to local storage
+        localStorage.setItem('cg_user_profile', JSON.stringify(profile))
+        
+        // Restore aws_connected state so dashboard doesn't show "new version"
+        if (profile.aws_connected) {
+            localStorage.setItem('aws_connected', 'true')
+            localStorage.setItem('connected_account_id', profile.connected_account_id)
+        }
+      } catch (err) {
+        console.error("Failed to sync profile from DB:", err)
+        // Fallback to purely local profile if DB fails
+        const avatar_initials = name.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2)
+        localStorage.setItem('cg_user_profile', JSON.stringify({ name, email, avatar_initials }))
+      }
 
       window.dispatchEvent(new Event('profile-updated'))
       setStatus('Signed in! Redirecting to dashboard...')

@@ -142,4 +142,17 @@ export const getAccounts = async () => {
   return res.data
 }
 
+// ── User Profile ──────────────────────────────────────────
+export const getUserProfile = async () => {
+  const userId = getUserId()
+  const res = await api.get('/users/profile', { params: { user_id: userId } })
+  return res.data
+}
+
+export const updateUserProfile = async (profileData: { name: string; email: string; avatar_initials: string }) => {
+  const userId = getUserId()
+  const res = await api.post('/users/profile', { ...profileData, user_id: userId })
+  return res.data
+}
+
 export default api

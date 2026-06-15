@@ -313,15 +313,19 @@ def connect_account(body):
         assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName='CloudGuardianValidation', DurationSeconds=900)
         account_id = assumed['AssumedRoleUser']['Arn'].split(':')[4]
         users_table = dynamodb.Table('cloud-guardian-users')
-        users_table.put_item(Item={
-            'user_id': user_id,
-            'account_id': account_id,
-            'role_arn': role_arn,
-            'nickname': nickname,
-            'region': region,
-            'connected_at': datetime.now(timezone.utc).isoformat(),
-            'status': 'active'
-        })
+        users_table.update_item(
+            Key={'user_id': user_id},
+            UpdateExpression="SET account_id = :a, role_arn = :r, nickname = :n, #reg = :reg, connected_at = :c, #st = :s",
+            ExpressionAttributeNames={'#reg': 'region', '#st': 'status'},
+            ExpressionAttributeValues={
+                ':a': account_id,
+                ':r': role_arn,
+                ':n': nickname,
+                ':reg': region,
+                ':c': datetime.now(timezone.utc).isoformat(),
+                ':s': 'active'
+            }
+        )
         return response(200, {'message': 'Account connected successfully', 'account_id': account_id})
     except Exception as e:
         return response(400, {'error': f'Could not assume role: {str(e)}'})
@@ -341,6 +345,59 @@ def get_connected_account(user_id='default-user'):
             'connected_at': item.get('connected_at'),
             'status': item.get('status'),
         })
+    except Exception as e:
+        return response(500, {'error': str(e)})
+
+# ── POST /users/profile ────────────────────────────────────
+def update_user_profile(body):
+    user_id = body.get('user_id')
+    if not user_id:
+        return response(400, {'error': 'user_id required'})
+    
+    table = dynamodb.Table('cloud-guardian-users')
+    
+    update_expr = "SET #n = :n, email = :e"
+    expr_names = {'#n': 'name'}
+    expr_vals = {
+        ':n': body.get('name', 'User'),
+        ':e': body.get('email', ''),
+    }
+    
+    if 'avatar_initials' in body:
+        update_expr += ", avatar_initials = :a"
+        expr_vals[':a'] = body['avatar_initials']
+        
+    try:
+        table.update_item(
+            Key={'user_id': user_id},
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames=expr_names,
+            ExpressionAttributeValues=expr_vals
+        )
+        return response(200, {'message': 'Profile updated'})
+    except Exception as e:
+        return response(500, {'error': str(e)})
+
+# ── GET /users/profile ─────────────────────────────────────
+def get_user_profile(user_id):
+    if not user_id or user_id == 'default-user':
+        return response(400, {'error': 'user_id required'})
+        
+    try:
+        table = dynamodb.Table('cloud-guardian-users')
+        result = table.get_item(Key={'user_id': user_id})
+        item = result.get('Item', {})
+        
+        aws_connected = bool(item.get('account_id') and item.get('role_arn'))
+        
+        profile = {
+            'name': item.get('name', 'User'),
+            'email': item.get('email', ''),
+            'avatar_initials': item.get('avatar_initials', 'U'),
+            'aws_connected': aws_connected,
+            'connected_account_id': item.get('account_id', '')
+        }
+        return response(200, {'profile': profile})
     except Exception as e:
         return response(500, {'error': str(e)})
 
@@ -452,6 +509,8 @@ def main(event, context):
         ('POST', '/accounts/connect'):         lambda: connect_account(body),
         ('GET',  '/accounts/me'):              lambda: get_connected_account(query.get('user_id', user_id)),
         ('GET',  '/audit-logs'):               lambda: get_audit_logs(request_region, user_id),
+        ('POST', '/users/profile'):            lambda: update_user_profile(body),
+        ('GET',  '/users/profile'):            lambda: get_user_profile(user_id),
     }
 
     handler = routes.get((method, path))
