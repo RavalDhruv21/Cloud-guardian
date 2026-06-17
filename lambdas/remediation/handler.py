@@ -165,8 +165,10 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
                     if bucket['Name'] not in WHITELISTED_BUCKETS:
                         revert_public_s3(bucket['Name'], role_arn, region, account_id, user_id)
                     issues += 1
-            except:
-                pass
+            except Exception:
+                if bucket['Name'] not in WHITELISTED_BUCKETS:
+                    revert_public_s3(bucket['Name'], role_arn, region, account_id, user_id)
+                issues += 1
     except Exception as e:
         print(f"S3 scan error: {e}")
     return issues
@@ -216,7 +218,7 @@ def main(event=None, context=None):
         sg_id = detail.get('requestParameters', {}).get('groupId', '')
         if sg_id:
             revert_open_port_22(sg_id, role_arn, region, account_id, user_id)
-    elif event_name in ['PutBucketAcl', 'PutBucketPolicy', 'DeletePublicAccessBlock']:
+    elif event_name in ['CreateBucket', 'PutBucketAcl', 'PutBucketPolicy', 'DeletePublicAccessBlock']:
         bucket_name = detail.get('requestParameters', {}).get('bucketName', '')
         if bucket_name:
             revert_public_s3(bucket_name, role_arn, region, account_id, user_id)

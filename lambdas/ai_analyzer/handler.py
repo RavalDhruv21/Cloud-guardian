@@ -40,6 +40,10 @@ def get_assumed_client(service, role_arn, region):
 def call_gemini(metrics_data):
     prompt = f"""You are an AWS infrastructure monitoring expert.
 Analyze the following EC2 metrics and detect any anomalies.
+CRITICAL RULES for Anomaly Detection:
+1. NEVER flag "High CPU usage" if 'cpu_avg' or 'cpu_max' are low (e.g., < 10%). Only flag High CPU usage if 'cpu_avg' > 75% or 'cpu_max' > 85%.
+2. If CPU metrics are extremely low, you may classify it as an "Underutilized Instance" anomaly (Severity: low), but NEVER as High CPU.
+3. Be highly accurate and avoid false positives. If the metrics look normal and within typical operational boundaries, set "anomaly_detected" to false.
 Metrics data: {json.dumps(metrics_data, indent=2)}
 Respond ONLY in this exact JSON format:
 {{"anomaly_detected": true or false, "severity": "low" or "medium" or "high" or "critical",
