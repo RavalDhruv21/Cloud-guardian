@@ -5,9 +5,9 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from lambdas.ai_analyzer.handler import call_groq
+from lambdas.ai_analyzer.handler import call_gemini
 
-def test_call_groq_returns_valid_structure():
+def test_call_gemini_returns_valid_structure():
     """Should return properly structured diagnosis"""
 
     mock_response = {
@@ -21,16 +21,16 @@ def test_call_groq_returns_valid_structure():
 
     with patch('lambdas.ai_analyzer.handler.requests.post') as mock_post:
         mock_post.return_value.json.return_value = {
-            'choices': [{
-                'message': {
-                    'content': json.dumps(mock_response)
+            'candidates': [{
+                'content': {
+                    'parts': [{'text': json.dumps(mock_response)}]
                 }
             }]
         }
         mock_post.return_value.raise_for_status = MagicMock()
 
         metrics = {"instance_id": "i-test", "cpu_avg": 94.5, "cpu_max": 98.2}
-        result = call_groq(metrics)
+        result = call_gemini(metrics)
 
         assert result['anomaly_detected'] == True
         assert result['severity'] == 'high'

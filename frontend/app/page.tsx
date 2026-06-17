@@ -16,7 +16,7 @@ const stats = [
 const steps = [
   { n: '01', title: 'Connect AWS',  desc: 'Run our CloudFormation template. Creates a read-only IAM role — done in 2 minutes.' },
   { n: '02', title: 'We monitor',   desc: 'Lambdas collect metrics every 15 min across EC2, RDS, S3, and billing data.' },
-  { n: '03', title: 'AI detects',   desc: 'Groq AI analyses patterns and surfaces anomalies with plain-English explanations.' },
+  { n: '03', title: 'AI detects',   desc: 'Gemini AI analyses patterns and surfaces anomalies with plain-English explanations.' },
   { n: '04', title: 'You act',      desc: 'Get smart alerts via email. Security misconfigs are auto-reverted before damage.' },
 ]
 
@@ -307,7 +307,7 @@ export default function LandingPage() {
             <p className="text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,0.55)' }}>
               AWS CloudWatch tells you a number. <span className="text-white font-medium">Cloud Guardian tells you what that number means,
               why it happened, and what to do about it.</span> Built on top of CloudWatch using AWS Lambda,
-              DynamoDB, and Groq AI — fully serverless, zero agents to install.
+              DynamoDB, and Gemini AI — fully serverless, zero agents to install.
             </p>
             <p className="text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,0.55)' }}>
               This is what SRE teams at Google and Amazon build internally — now available as a free tool for everyone.
@@ -438,7 +438,7 @@ export default function LandingPage() {
             <span className="text-sm font-medium text-white">Cloud Guardian</span>
           </div>
           <div className="text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
-            Built with AWS Lambda · DynamoDB · Groq AI · Next.js
+            Built with AWS Lambda · DynamoDB · Gemini AI · Next.js
           </div>
           <div className="text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
             © 2025 Cloud Guardian

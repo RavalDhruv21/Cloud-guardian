@@ -123,36 +123,38 @@ export default function AgentAIPage() {
     setInput('')
 
     try {
-      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_GROQ_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'llama-3.1-8b-instant',
-          messages: [
-            {
-              role: 'system',
-              content: `You are Cloud Guardian AI — an expert AWS infrastructure assistant.
+      const systemPrompt = `You are Cloud Guardian AI — an expert AWS infrastructure assistant.
 You have real-time context of the user's AWS account:
 ${accountContext}
 
 Answer questions specifically about their real infrastructure data shown above.
 Be concise, technical, and actionable. Use bullet points for lists.
 Keep responses under 150 words unless more detail is needed.
-If asked about specific instances, refer to the real instance IDs from the context.`
-            },
-            ...messages.map(m => ({role: m.role, content: m.content})),
-            {role: 'user', content: text}
+If asked about specific instances, refer to the real instance IDs from the context.`;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.NEXT_PUBLIC_GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [
+            ...messages.map(m => ({
+              role: m.role === 'assistant' ? 'model' : 'user',
+              parts: [{ text: m.content }]
+            })),
+            { role: 'user', parts: [{ text }] }
           ],
-          temperature: 0.3,
-          max_tokens: 500
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 500
+          }
         })
       })
 
       const data = await response.json()
-      const aiText = data.choices?.[0]?.message?.content || 'Sorry — could not get a response. Please try again.'
+      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry — could not get a response. Please try again.'
 
       setMessages(prev => [...prev, {
         role: 'assistant',

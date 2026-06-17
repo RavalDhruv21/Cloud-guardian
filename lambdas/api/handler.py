@@ -261,7 +261,7 @@ def ask_agent(body):
     message = body.get('message', '')
     context = body.get('context', {})
     user_id = body.get('user_id', 'default-user')
-    groq_key = os.getenv('GROQ_API_KEY')
+    gemini_key = os.getenv('GEMINI_API_KEY')
 
     role_arn, region, account_id = get_user_role_arn(user_id=user_id)
 
@@ -284,19 +284,23 @@ Current account state (Account: {account_id or 'unknown'}, Region: {region}):
 - Additional context: {json.dumps(context)[:200]}
 Answer questions specifically about their infrastructure. Be concise and actionable."""
 
-    groq_response = req.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        headers={'Authorization': f'Bearer {groq_key}', 'Content-Type': 'application/json'},
+    gemini_response = req.post(
+        f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}',
+        headers={'Content-Type': 'application/json'},
         json={
-            'model': 'llama-3.1-8b-instant',
-            'messages': [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': message}
+            'systemInstruction': {
+                'parts': [{'text': system_prompt}]
+            },
+            'contents': [
+                {'parts': [{'text': message}]}
             ],
-            'temperature': 0.3, 'max_tokens': 400
+            'generationConfig': {
+                'temperature': 0.3,
+                'maxOutputTokens': 400
+            }
         }
     )
-    ai_text = groq_response.json()['choices'][0]['message']['content']
+    ai_text = gemini_response.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'Error generating response')
     return response(200, {'reply': ai_text})
 
 # ── POST /accounts/connect ─────────────────────────────────

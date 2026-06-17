@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
 
 def get_all_users():
@@ -37,7 +37,7 @@ def get_assumed_client(service, role_arn, region):
         print(f"Role assumption failed: {e}")
         return boto3.client(service, region_name=region)
 
-def call_groq(metrics_data):
+def call_gemini(metrics_data):
     prompt = f"""You are an AWS infrastructure monitoring expert.
 Analyze the following EC2 metrics and detect any anomalies.
 Metrics data: {json.dumps(metrics_data, indent=2)}
@@ -45,18 +45,26 @@ Respond ONLY in this exact JSON format:
 {{"anomaly_detected": true or false, "severity": "low" or "medium" or "high" or "critical",
 "summary": "one line summary", "likely_cause": "cause", "recommended_action": "action",
 "estimated_monthly_cost_impact": "cost impact"}}"""
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}
     body = {
-        "model": "llama-3.1-8b-instant",
-        "messages": [
-            {"role": "system", "content": "You are an AWS infrastructure expert. Always respond in valid JSON only."},
-            {"role": "user", "content": prompt}
+        "systemInstruction": {
+            "parts": [{"text": "You are an AWS infrastructure expert. Always respond in valid JSON only."}]
+        },
+        "contents": [
+            {"parts": [{"text": prompt}]}
         ],
-        "temperature": 0.2, "max_tokens": 500
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 500
+        }
     }
-    response = requests.post(GROQ_API_URL, headers=headers, json=body)
+    response = requests.post(GEMINI_API_URL, headers=headers, json=body)
     response.raise_for_status()
-    raw_text = response.json()['choices'][0]['message']['content'].strip()
+    try:
+        raw_text = response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    except Exception as e:
+        print(f"Error parsing Gemini response: {e}, {response.text}")
+        raise
     if raw_text.startswith("```"):
         raw_text = raw_text.split("```")[1]
         if raw_text.startswith("json"):
@@ -149,7 +157,7 @@ def main(event=None, context=None):
             account_id = metric.get('account_id')
             user_id = metric.get('user_id')
             try:
-                diagnosis = call_groq(metric)
+                diagnosis = call_gemini(metric)
                 if diagnosis['anomaly_detected']:
                     save_anomaly(metric['instance_id'], metric, diagnosis, account_id=account_id, user_id=user_id)
                     send_sns_alert(diagnosis, metric, account_id=account_id)
@@ -173,7 +181,7 @@ def main(event=None, context=None):
                 live_metrics = get_live_metrics(role_arn, region, account_id)
                 for metric in live_metrics:
                     try:
-                        diagnosis = call_groq(metric)
+                        diagnosis = call_gemini(metric)
                         if diagnosis['anomaly_detected']:
                             save_anomaly(metric['instance_id'], metric, diagnosis, account_id=account_id, user_id=user_id)
                             send_sns_alert(diagnosis, metric, account_id=account_id)

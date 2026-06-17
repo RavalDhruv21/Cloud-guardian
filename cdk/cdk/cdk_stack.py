@@ -95,7 +95,7 @@ class CloudGuardianStack(Stack):
             'DYNAMODB_ANOMALIES_TABLE': 'cloud-guardian-anomalies',
             'DYNAMODB_COST_TABLE': 'cloud-guardian-cost-suggestions',
             'SNS_TOPIC_ARN': alert_topic.topic_arn,
-            'GROQ_API_KEY': os.getenv('GROQ_API_KEY', ''),
+            'GEMINI_API_KEY': os.getenv('GEMINI_API_KEY', ''),
         }
 
         # ── Lambda Functions ──────────────────────────────

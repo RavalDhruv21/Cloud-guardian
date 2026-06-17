@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
 def get_all_users():
     try:
@@ -46,13 +46,14 @@ Cost suggestions: {json.dumps(cost_suggestions, default=str)[:800]}
 
 Include: 1) Executive summary 2) Critical issues 3) Cost savings 4) Health score /10 5) Top 3 actions next week.
 Plain text, concise."""
-    response = requests.post(GROQ_API_URL,
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-        json={"model": "llama-3.1-8b-instant",
-              "messages": [{"role": "user", "content": prompt}],
-              "temperature": 0.3, "max_tokens": 1000})
+    response = requests.post(GEMINI_API_URL,
+        headers={"Content-Type": "application/json"},
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1000}
+        })
     response.raise_for_status()
-    return response.json()['choices'][0]['message']['content']
+    return response.json()['candidates'][0]['content']['parts'][0]['text']
 
 def save_to_s3(report_text, account_id):
     s3 = boto3.client('s3', region_name='us-east-1')
