@@ -4,8 +4,6 @@ import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from dotenv import load_dotenv
-import jwt
-from jwt import PyJWKClient
 
 load_dotenv()
 
@@ -17,58 +15,20 @@ class DecimalEncoder(json.JSONEncoder):
             return float(obj)
         return super().default(obj)
 
-def cors_headers(origin='*'):
-    headers = {
+def cors_headers():
+    return {
+        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type,Authorization',
         'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Credentials': 'true'
+        'Content-Type': 'application/json'
     }
-    headers['Access-Control-Allow-Origin'] = origin
-    if origin == '*':
-        headers.pop('Access-Control-Allow-Credentials', None)
-    return headers
 
-current_origin = '*'
-
-def response(status_code, body, extra_headers=None):
-    headers = cors_headers(current_origin)
-    if extra_headers:
-        headers.update(extra_headers)
+def response(status_code, body):
     return {
         'statusCode': status_code,
-        'headers': headers,
+        'headers': cors_headers(),
         'body': json.dumps(body, cls=DecimalEncoder)
     }
-
-def get_token_from_cookie(headers):
-    if not headers: return None
-    cookie_header = headers.get('cookie') or headers.get('Cookie')
-    if not cookie_header: return None
-    for item in cookie_header.split(';'):
-        if '=' in item:
-            k, v = item.strip().split('=', 1)
-            if k == 'cg_token':
-                return v
-    return None
-
-def verify_token(token):
-    try:
-        region = os.getenv('NEXT_PUBLIC_REGION', 'us-east-1')
-        user_pool_id = os.getenv('NEXT_PUBLIC_COGNITO_USER_POOL_ID', 'us-east-1_yqv39lzIR')
-        url = f"https://cognito-idp.{region}.amazonaws.com/{user_pool_id}/.well-known/jwks.json"
-        jwks_client = PyJWKClient(url)
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        data = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            options={"verify_aud": False}
-        )
-        return data.get('sub') or data.get('username')
-    except Exception as e:
-        print(f"Token verification failed: {e}")
-        return None
 
 # ── Cross-account role assumption ─────────────────────────
 def get_user_role_arn(user_id='default-user', request_region=None):
@@ -513,10 +473,6 @@ def get_audit_logs(region='us-east-1', user_id='default-user'):
 
 # ── Main router ────────────────────────────────────────────
 def main(event, context):
-    global current_origin
-    headers = event.get('headers') or {}
-    current_origin = headers.get('origin') or headers.get('Origin') or '*'
-
     method = event.get('httpMethod', 'GET')
     path = event.get('path', '/')
     query = event.get('queryStringParameters') or {}
@@ -529,40 +485,13 @@ def main(event, context):
             pass
 
     if method == 'OPTIONS':
-        return {'statusCode': 200, 'headers': cors_headers(current_origin), 'body': ''}
+        return {'statusCode': 200, 'headers': cors_headers(), 'body': ''}
 
     print(f"{method} {path}")
 
-    user_id = 'default-user'
-    token = get_token_from_cookie(headers)
-    if not token:
-        auth_header = headers.get('authorization') or headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ')[1]
-            
-    if token:
-        v_sub = verify_token(token)
-        if v_sub:
-            user_id = v_sub
-
-    if user_id == 'default-user':
-        user_id = query.get('user_id', body.get('user_id', 'default-user'))
-
+    # Extract common params
+    user_id = query.get('user_id', body.get('user_id', 'default-user'))
     request_region = query.get('region', 'us-east-1')
-
-    if path == '/auth/session' and method == 'POST':
-        req_token = body.get('token')
-        if not req_token: return response(400, {'error': 'Token required'})
-        v_sub = verify_token(req_token)
-        if not v_sub: return response(401, {'error': 'Invalid token'})
-        return response(200, {'success': True, 'userId': v_sub}, {
-            'Set-Cookie': f'cg_token={req_token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=604800'
-        })
-        
-    if path == '/auth/logout' and method == 'POST':
-        return response(200, {'success': True}, {
-            'Set-Cookie': 'cg_token=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0'
-        })
 
     routes = {
         ('GET',  '/metrics/history'):          lambda: get_instance_metrics_history(query.get('instance_id', ''), request_region, query.get('hours', 2), user_id),

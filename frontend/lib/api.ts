@@ -4,12 +4,25 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
 const api = axios.create({
   baseURL: API_URL,
-  headers: { 'Content-Type': 'application/json' },
-  withCredentials: true
+  headers: { 'Content-Type': 'application/json' }
 })
 
-// No longer need to manually attach Authorization header, cookies will be sent
+// ── Get current user's unique ID from JWT token ───────────
+export const getUserId = (): string => {
+  try {
+    const token = localStorage.getItem('cg_token')
+    if (!token) return 'default-user'
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return payload.sub || 'default-user'
+  } catch {
+    return 'default-user'
+  }
+}
+
+// Add auth token to every axios request
 api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('cg_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
@@ -19,14 +32,24 @@ const getRegion = () =>
 // ── Metrics ───────────────────────────────────────────────
 export const getMetrics = async () => {
   const region = getRegion()
-  const res = await api.get('/live-metrics', { params: { region } })
-  return res.data
+  const token = localStorage.getItem('cg_token') || ''
+  const userId = getUserId()
+  const res = await fetch(
+    `${API_URL}/live-metrics?region=${region}&user_id=${userId}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  return res.json()
 }
 
 export const getMetricsHistory = async (instanceId: string) => {
   const region = getRegion()
-  const res = await api.get('/metrics/history', { params: { instance_id: instanceId, region, hours: 2 } })
-  return res.data
+  const token = localStorage.getItem('cg_token') || ''
+  const userId = getUserId()
+  const res = await fetch(
+    `${API_URL}/metrics/history?instance_id=${instanceId}&region=${region}&hours=2&user_id=${userId}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  return res.json()
 }
 
 // ── Anomalies ─────────────────────────────────────────────
@@ -36,7 +59,8 @@ export const getAnomalies = async (filters?: {
   account_id?: string
 }) => {
   const region = getRegion()
-  const res = await api.get('/anomalies', { params: { ...filters, region } })
+  const userId = getUserId()
+  const res = await api.get('/anomalies', { params: { ...filters, region, user_id: userId } })
   return res.data
 }
 
@@ -48,7 +72,8 @@ export const resolveAnomaly = async (instanceId: string, timestamp: string) => {
 // ── Cost suggestions ──────────────────────────────────────
 export const getCostSuggestions = async (accountId?: string) => {
   const region = getRegion()
-  const res = await api.get('/cost-suggestions', { params: { account_id: accountId, region } })
+  const userId = getUserId()
+  const res = await api.get('/cost-suggestions', { params: { account_id: accountId, region, user_id: userId } })
   return res.data
 }
 
@@ -65,43 +90,50 @@ export const stopResource = async (resourceId: string, resourceType: string) => 
 // ── Security events ───────────────────────────────────────
 export const getSecurityEvents = async (accountId?: string) => {
   const region = getRegion()
-  const res = await api.get('/security-events', { params: { account_id: accountId, region } })
+  const userId = getUserId()
+  const res = await api.get('/security-events', { params: { account_id: accountId, region, user_id: userId } })
   return res.data
 }
 
 // ── Audit logs ────────────────────────────────────────────
 export const getAuditLogs = async (region?: string) => {
   const r = region || getRegion()
-  const res = await api.get('/audit-logs', { params: { region: r } })
+  const userId = getUserId()
+  const res = await api.get('/audit-logs', { params: { region: r, user_id: userId } })
   return res.data
 }
 
 // ── Reports ───────────────────────────────────────────────
 export const getReports = async () => {
-  const res = await api.get('/reports')
+  const userId = getUserId()
+  const res = await api.get('/reports', { params: { user_id: userId } })
   return res.data
 }
 
 export const getReportContent = async (key: string) => {
   const region = getRegion()
-  const res = await api.get('/reports/content', { params: { key, region } })
+  const userId = getUserId()
+  const res = await api.get('/reports/content', { params: { key, region, user_id: userId } })
   return res.data
 }
 
 // ── Agent AI ──────────────────────────────────────────────
 export const askAgent = async (message: string, context?: object) => {
-  const res = await api.post('/agent', { message, context })
+  const userId = getUserId()
+  const res = await api.post('/agent', { message, context, user_id: userId })
   return res.data
 }
 
 // ── AWS Account management ────────────────────────────────
 export const connectAccount = async (roleArn: string, nickname: string, region: string) => {
-  const res = await api.post('/accounts/connect', { role_arn: roleArn, nickname, region })
+  const userId = getUserId()
+  const res = await api.post('/accounts/connect', { role_arn: roleArn, nickname, region, user_id: userId })
   return res.data
 }
 
 export const getConnectedAccount = async () => {
-  const res = await api.get('/accounts/me')
+  const userId = getUserId()
+  const res = await api.get('/accounts/me', { params: { user_id: userId } })
   return res.data
 }
 
@@ -112,12 +144,14 @@ export const getAccounts = async () => {
 
 // ── User Profile ──────────────────────────────────────────
 export const getUserProfile = async () => {
-  const res = await api.get('/users/profile')
+  const userId = getUserId()
+  const res = await api.get('/users/profile', { params: { user_id: userId } })
   return res.data
 }
 
 export const updateUserProfile = async (profileData: { name: string; email: string; avatar_initials: string }) => {
-  const res = await api.post('/users/profile', profileData)
+  const userId = getUserId()
+  const res = await api.post('/users/profile', { ...profileData, user_id: userId })
   return res.data
 }
 
