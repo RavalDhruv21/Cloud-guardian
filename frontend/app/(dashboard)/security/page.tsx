@@ -11,17 +11,23 @@ export default function SecurityPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
   useEffect(() => {
-    const fetchEvents = async () => {
+    let interval: ReturnType<typeof setInterval>
+
+    const fetchEvents = async (isInitial = false) => {
       try {
         const data = await getSecurityEvents()
         setEvents(data.events || [])
       } catch (err) {
         console.error('Failed to fetch security events:', err)
       } finally {
-        setLoading(false)
+        if (isInitial) setLoading(false)
       }
     }
-    fetchEvents()
+
+    fetchEvents(true)
+    // Poll every 5 seconds so new events appear within 5s of detection
+    interval = setInterval(() => fetchEvents(false), 5000)
+    return () => clearInterval(interval)
   }, [])
 
   const filtered = events.filter(e => {

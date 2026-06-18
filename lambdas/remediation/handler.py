@@ -218,14 +218,25 @@ def main(event=None, context=None):
         sg_id = detail.get('requestParameters', {}).get('groupId', '')
         if sg_id:
             revert_open_port_22(sg_id, role_arn, region, account_id, user_id)
-    elif event_name in ['CreateBucket', 'PutBucketAcl', 'PutBucketPolicy', 'DeletePublicAccessBlock']:
+    elif event_name in ['CreateBucket', 'PutBucketAcl', 'PutBucketPolicy', 'DeletePublicAccessBlock', 'PutBucketPublicAccessBlock']:
         bucket_name = detail.get('requestParameters', {}).get('bucketName', '')
+        if not bucket_name:
+            bucket_name = detail.get('requestParameters', {}).get('bucket', {}).get('_', '') or \
+                        detail.get('requestParameters', {}).get('bucketName', '')
         if bucket_name:
-            revert_public_s3(bucket_name, role_arn, region, account_id, user_id)
-    elif user_identity.get('type') == 'Root':
-        save_security_event('Root account login', 'AWS Root Account',
-            f'Root login from {source_ip} at {event_time}', account_id=account_id, user_id=user_id)
-    
+            # For PutBucketPublicAccessBlock, only act if block is being turned OFF
+            if event_name == 'PutBucketPublicAccessBlock':
+                config = detail.get('requestParameters', {}).get('PublicAccessBlockConfiguration', {})
+                block_all = all([
+                    config.get('BlockPublicAcls', True),
+                    config.get('IgnorePublicAcls', True),
+                    config.get('BlockPublicPolicy', True),
+                    config.get('RestrictPublicBuckets', True),
+                ])
+                if not block_all:
+                    revert_public_s3(bucket_name, role_arn, region, account_id, user_id)
+            else:
+                revert_public_s3(bucket_name, role_arn, region, account_id, user_id)
     # Rule 3 — Root account usage
     elif user_identity.get('type') == 'Root':
         print("Root account usage detected")
