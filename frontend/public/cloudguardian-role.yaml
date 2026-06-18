@@ -38,7 +38,7 @@ Resources:
               StringEquals:
                 s3:x-amz-acl: bucket-owner-full-control
 
-  # ── CloudTrail ─────────────────────────────────────────────
+  # ── CloudTrail (multi-region so all API calls are captured) ──
   CloudGuardianTrail:
     Type: AWS::CloudTrail::Trail
     DependsOn: CloudGuardianTrailBucketPolicy
@@ -47,7 +47,7 @@ Resources:
       S3BucketName: !Ref CloudGuardianTrailBucket
       IsLogging: true
       IncludeGlobalServiceEvents: true
-      IsMultiRegionTrail: false
+      IsMultiRegionTrail: true
       EnableLogFileValidation: true
 
   # ── IAM Role ───────────────────────────────────────────────
@@ -130,6 +130,69 @@ Resources:
                   - sts:AssumeRole
                   - sts:GetCallerIdentity
                 Resource: '*'
+
+  # ── EventBridge rule: S3 public access events ──────────────
+  # Forwards to Cloud Guardian remediation Lambda in real-time
+  S3SecurityEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cloud-guardian-s3-security-forward
+      Description: Forward S3 public access events to Cloud Guardian remediation Lambda
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventName:
+            - CreateBucket
+            - PutBucketAcl
+            - PutBucketPolicy
+            - DeletePublicAccessBlock
+            - PutBucketPublicAccessBlock
+      State: ENABLED
+      Targets:
+        - Id: CloudGuardianRemediationLambda
+          Arn: arn:aws:lambda:us-east-1:808715035605:function:cloud-guardian-remediation
+
+  # ── EventBridge rule: Security Group port 22 ───────────────
+  SGSecurityEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cloud-guardian-sg-security-forward
+      Description: Forward SG port 22 open events to Cloud Guardian remediation Lambda
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventName:
+            - AuthorizeSecurityGroupIngress
+      State: ENABLED
+      Targets:
+        - Id: CloudGuardianRemediationLambdaSG
+          Arn: arn:aws:lambda:us-east-1:808715035605:function:cloud-guardian-remediation
+
+  # ── EventBridge rule: Root account login ───────────────────
+  RootLoginEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cloud-guardian-root-login-forward
+      Description: Forward root account login events to Cloud Guardian remediation Lambda
+      EventPattern:
+        source:
+          - aws.signin
+        detail-type:
+          - AWS Console Sign In via CloudTrail
+        detail:
+          userIdentity:
+            type:
+              - Root
+      State: ENABLED
+      Targets:
+        - Id: CloudGuardianRemediationLambdaRoot
+          Arn: arn:aws:lambda:us-east-1:808715035605:function:cloud-guardian-remediation
 
 Outputs:
   RoleArn:
