@@ -66,11 +66,8 @@ function AuthCallbackInner() {
       const email = payload.email || payload['cognito:username'] || payload.sub
       const name = payload.name || payload.given_name || email?.split('@')[0] || 'User'
 
-      await fetch('/api/auth/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: tokens.access_token })
-      })
+      const { default: api } = await import('@/lib/api')
+      await api.post('/auth/session', { token: tokens.access_token })
       localStorage.setItem('cg_user', JSON.stringify({ name, email }))
 
       // Save session in same format as email/password login

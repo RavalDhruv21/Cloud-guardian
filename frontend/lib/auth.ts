@@ -63,11 +63,8 @@ export const loginUser = async (email: string, password: string): Promise<any> =
     // Fetch the real tokens
     const session = await fetchAuthSession()
     if (session.tokens?.accessToken) {
-      await fetch('/api/auth/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: session.tokens.accessToken.toString() })
-      })
+      const { default: api } = await import('./api')
+      await api.post('/auth/session', { token: session.tokens.accessToken.toString() })
     }
 
     // Set cookie for middleware
@@ -111,7 +108,8 @@ const clearSession = async () => {
   localStorage.removeItem('aws_connected')
   localStorage.removeItem('connected_account_id')
   try {
-    await fetch('/api/auth/logout', { method: 'POST' })
+    const { default: api } = await import('./api')
+    await api.post('/auth/logout')
   } catch (e) {
     console.error('Failed to clear server session', e)
   }
