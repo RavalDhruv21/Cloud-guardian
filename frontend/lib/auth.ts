@@ -63,7 +63,11 @@ export const loginUser = async (email: string, password: string): Promise<any> =
     // Fetch the real tokens
     const session = await fetchAuthSession()
     if (session.tokens?.accessToken) {
-      localStorage.setItem('cg_token', session.tokens.accessToken.toString())
+      await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: session.tokens.accessToken.toString() })
+      })
     }
 
     // Set cookie for middleware
@@ -106,7 +110,11 @@ const clearSession = async () => {
   localStorage.removeItem('cg_user_profile')
   localStorage.removeItem('aws_connected')
   localStorage.removeItem('connected_account_id')
-  localStorage.removeItem('cg_token')
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' })
+  } catch (e) {
+    console.error('Failed to clear server session', e)
+  }
   localStorage.removeItem('cg_user')
   // Properly expire the cookie
   document.cookie = 'cg_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
