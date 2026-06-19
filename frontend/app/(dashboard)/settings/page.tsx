@@ -181,6 +181,11 @@ export default function SettingsPage() {
     const updated = { ...profile, aws_account_id: '', aws_role_arn: '' }
     setProfile(updated)
     saveUserProfile(updated)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aws_connected', 'false')
+      localStorage.setItem('connected_account_id', '')
+      window.dispatchEvent(new Event('profile-updated'))
+    }
     showToast('Account disconnected')
   }
 
