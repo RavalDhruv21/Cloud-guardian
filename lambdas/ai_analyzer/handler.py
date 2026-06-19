@@ -59,12 +59,12 @@ def call_gemini(metrics_data):
 Analyze the following EC2 metrics collected over the last 24 hours and detect anomalies.
 
 CRITICAL RULES:
-1. Only flag "High CPU" if cpu_avg > 75% OR cpu_max > 85% OR sustained_high_minutes > 15.
-2. If sustained_high_minutes > 15, this IS a high/critical anomaly even if the current cpu_avg has since dropped.
-3. Consider cpu_avg_24h (overall trend) alongside cpu_avg (latest snapshot) — a current drop does NOT cancel a sustained past spike.
-4. If all metrics are within normal bounds (cpu_avg < 60%, cpu_max < 75%, sustained_high_minutes < 5), set anomaly_detected to false.
+1. Only flag "High CPU" if the CURRENT cpu_avg > 75%.
+2. Do NOT flag an anomaly based purely on past spikes (e.g., high cpu_max or past sustained_high_minutes) if the current cpu_avg is normal (<= 75%).
+3. Consider cpu_avg_24h (overall trend) alongside cpu_avg (latest snapshot).
+4. If current cpu_avg is normal (<= 75%), set anomaly_detected to false.
 5. If cpu_avg < 5% consistently, flag as "Underutilized Instance" with severity "low".
-6. Avoid false positives — only flag real issues.
+6. Avoid false positives — only flag real current issues.
 
 Metrics data:
 {json.dumps(metrics_data, indent=2)}
@@ -109,23 +109,12 @@ def deterministic_check(metric):
     without relying on the AI. Returns None if no clear breach.
     """
     cpu_avg = metric.get('cpu_avg', 0)
-    cpu_max = metric.get('cpu_max', 0)
-    sustained = metric.get('sustained_high_minutes', 0)
 
-    if sustained > SUSTAINED_MINUTES_THRESHOLD or cpu_max > CPU_MAX_CRITICAL_THRESHOLD:
-        severity = 'critical' if (sustained > 30 or cpu_max > 95) else 'high'
+    if cpu_avg > CPU_AVG_CRITICAL_THRESHOLD:
+        severity = 'critical' if cpu_avg > 90 else 'high'
         return {
             'anomaly_detected': True,
             'severity': severity,
-            'summary': f'High CPU utilization detected — {cpu_max}% peak, sustained {sustained} min above 80%',
-            'likely_cause': 'Sustained CPU spike over extended period — possible runaway process, traffic surge, or under-provisioning',
-            'recommended_action': 'Investigate running processes (top/htop), check application logs, consider scaling up or auto-scaling',
-            'estimated_monthly_cost_impact': 'Performance degradation risk; potential need for larger instance type',
-        }
-    if cpu_avg > CPU_AVG_CRITICAL_THRESHOLD:
-        return {
-            'anomaly_detected': True,
-            'severity': 'high',
             'summary': f'CPU average is critically high at {cpu_avg}%',
             'likely_cause': 'High application load or runaway process',
             'recommended_action': 'Review running processes and consider scaling up the instance',
