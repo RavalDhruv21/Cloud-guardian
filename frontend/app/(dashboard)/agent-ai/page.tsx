@@ -71,14 +71,20 @@ export default function AgentAIPage() {
         ? unresolved.map((a: any) => `${a.instance_id}: ${a.summary}`).join('; ')
         : 'none'
 
+      const resolvedAnomalies = anomalies.filter((x: any) => x.resolved)
+      const pastAnomaliesDetails = resolvedAnomalies.length > 0
+        ? resolvedAnomalies.slice(0, 5).map((a: any) => `${a.instance_id}: ${a.summary} (Resolved)`).join('; ')
+        : 'none recently'
+
       const costDetails = costs.length > 0
         ? costs.map((c: any) => `${c.resource_id}: ${c.estimated_saving}`).join('; ')
         : 'none identified'
 
       const ctx = `
-- EC2 instances monitored: ${instances.length > 0 ? instanceDetails : 'none yet'}
-- Unresolved anomalies (${unresolved.length}): ${anomalyDetails}
-- Cost savings (${costs.length} found): ${costDetails} — total $${totalSavings.toFixed(0)}/mo
+- EC2 instances monitored (Current State): ${instances.length > 0 ? instanceDetails : 'none yet'}
+- Unresolved anomalies (Active Issues): ${anomalyDetails}
+- Past anomalies (Historical Context): ${pastAnomaliesDetails}
+- Cost optimization opportunities: ${costDetails} — total $${totalSavings.toFixed(0)}/mo
 - Account ID: ${process.env.NEXT_PUBLIC_AWS_ACCOUNT_ID || 'connected'}
 - Region: ${region}`
 
@@ -127,10 +133,12 @@ export default function AgentAIPage() {
 You have real-time context of the user's AWS account:
 ${accountContext}
 
-Answer questions specifically about their real infrastructure data shown above.
-Be concise, technical, and actionable. Use bullet points for lists.
-Keep responses under 150 words unless more detail is needed.
-If asked about specific instances, refer to the real instance IDs from the context.`;
+Your goal is to provide highly accurate, detailed, and insightful responses. 
+- Summarize the current situation alongside past historical information to give a complete picture.
+- Suggest appropriate actions, optimizations, and technical details.
+- Always tailor your advice specifically to the real infrastructure data shown above.
+- Use formatting (bullet points, bold text) to structure complex information.
+- Provide comprehensive answers that fully resolve the user's inquiry without artificial length constraints.`;
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.NEXT_PUBLIC_GEMINI_API_KEY}`, {
         method: 'POST',
@@ -201,47 +209,47 @@ If asked about specific instances, refer to the real instance IDs from the conte
     // Replaced height calculation to properly fill the remaining space without overflowing
     <div className="flex flex-col h-[calc(100vh-140px)] animate-entrance w-full">
 
-      {/* Header & Context */}
-      <div className="flex items-start justify-between mb-4 flex-shrink-0 bg-[rgba(255,255,255,0.02)] p-4 rounded-xl border border-[rgba(255,255,255,0.05)]">
-        <div className="flex flex-col gap-3">
-          <div>
-            <h1 className="text-lg font-semibold text-white">Agent AI</h1>
-            <p className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.5)'}}>
-              {contextLoading ? 'Loading your AWS account data...' : 'Knows your real AWS account — ask anything'}
-            </p>
-          </div>
-          {/* Compact Context Chips */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {contextLoading ? (
-              <span className="text-xs text-white/50">Fetching live data...</span>
-            ) : contextChips.map(chip => (
-              <span
-                key={chip.label}
-                className="text-[11px] px-2 py-1 rounded-md font-bold shadow-sm"
-                style={{background: chip.bg, color: chip.color, border: `1px solid ${chip.bg}`}}
-              >
-                {chip.label}
-              </span>
-            ))}
-          </div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
+        <div>
+          <h1 className="text-lg font-semibold text-white">Agent AI</h1>
+          <p className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.5)'}}>
+            {contextLoading ? 'Loading your AWS account data...' : 'Knows your real AWS account — ask anything'}
+          </p>
         </div>
-        <div className="flex items-center gap-3 mt-1">
+        <div className="flex items-center gap-2 mt-1">
           <button
             onClick={loadContext}
             disabled={contextLoading}
-            className="text-xs px-4 py-2 rounded-lg border transition-all disabled:opacity-40 hover:bg-white/5"
+            className="text-[11px] px-3 py-1.5 rounded-md border transition-all disabled:opacity-40 hover:bg-white/5"
             style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'}}
           >
             {contextLoading ? 'Loading...' : 'Refresh'}
           </button>
           <div
-            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg font-medium shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-md font-medium shadow-[0_0_15px_rgba(16,185,129,0.15)]"
             style={{background: 'rgba(16,185,129,0.1)', color: '#34D399', border: '1px solid rgba(16,185,129,0.2)'}}
           >
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
             {contextLoading ? 'Syncing...' : 'Active'}
           </div>
         </div>
+      </div>
+
+      {/* Ultra-compact Context Chips */}
+      <div className="flex items-center gap-2 flex-wrap mb-3 flex-shrink-0">
+        <span className="text-[10px] font-bold uppercase tracking-wider mr-1" style={{color: 'rgba(255,255,255,0.3)'}}>Context:</span>
+        {contextLoading ? (
+          <span className="text-[11px] text-white/50">Fetching live data...</span>
+        ) : contextChips.map(chip => (
+          <span
+            key={chip.label}
+            className="text-[10px] px-2 py-0.5 rounded-md font-bold shadow-sm"
+            style={{background: chip.bg, color: chip.color, border: `1px solid ${chip.bg}`}}
+          >
+            {chip.label}
+          </span>
+        ))}
       </div>
 
       {/* Chat area */}
