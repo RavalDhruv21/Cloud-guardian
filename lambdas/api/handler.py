@@ -285,7 +285,7 @@ Current account state (Account: {account_id or 'unknown'}, Region: {region}):
 Answer questions specifically about their infrastructure. Be concise and actionable."""
 
     gemini_response = req.post(
-        f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}',
+        f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}',
         headers={'Content-Type': 'application/json'},
         json={
             'systemInstruction': {
