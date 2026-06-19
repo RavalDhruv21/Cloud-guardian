@@ -140,7 +140,7 @@ If asked about specific instances, refer to the real instance IDs from the conte
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [
-            ...messages.map(m => ({
+            ...messages.filter((m, i) => !(i === 0 && m.role === 'assistant')).map(m => ({
               role: m.role === 'assistant' ? 'model' : 'user',
               parts: [{ text: m.content }]
             })),
