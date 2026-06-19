@@ -154,7 +154,10 @@ If asked about specific instances, refer to the real instance IDs from the conte
       })
 
       const data = await response.json()
-      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry — could not get a response. Please try again.'
+      if (!response.ok) {
+        console.error("Gemini API Error:", data);
+      }
+      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || `Error from Gemini: ${data.error?.message || JSON.stringify(data)}`
 
       setMessages(prev => [...prev, {
         role: 'assistant',
