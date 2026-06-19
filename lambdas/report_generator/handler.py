@@ -26,8 +26,8 @@ def get_weekly_anomalies(account_id=None):
     items = table.scan().get('Items', [])
     if account_id:
         items = [i for i in items if i.get('account_id') == account_id]
-    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    return [i for i in items if i.get('timestamp', '') >= week_ago]
+    days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    return [i for i in items if i.get('timestamp', '') >= days_ago]
 
 def get_cost_suggestions(account_id=None):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
@@ -38,19 +38,19 @@ def get_cost_suggestions(account_id=None):
     return [i for i in items if i.get('status') != 'dismissed']
 
 def generate_report(anomalies, cost_suggestions, account_id, region):
-    prompt = f"""Write a weekly AWS infrastructure health report.
+    prompt = f"""Write a 3-day AWS infrastructure health report.
 Account: {account_id}, Region: {region}
-Anomalies this week: {len(anomalies)} | Cost opportunities: {len(cost_suggestions)}
-Anomalies: {json.dumps(anomalies, default=str)[:1500]}
-Cost suggestions: {json.dumps(cost_suggestions, default=str)[:800]}
+Anomalies past 3 days: {len(anomalies)} | Cost opportunities: {len(cost_suggestions)}
+Anomalies: {json.dumps(anomalies[:10], default=str)}
+Cost suggestions: {json.dumps(cost_suggestions[:5], default=str)}
 
-Include: 1) Executive summary 2) Critical issues 3) Cost savings 4) Health score /10 5) Top 3 actions next week.
-Plain text, concise."""
+Include exactly these sections: 1) Executive summary 2) Critical issues 3) Cost savings 4) Health score /10 5) Top 3 actions next 3 days.
+Format the output clearly and complete all 5 sections. Plain text, concise."""
     response = requests.post(GEMINI_API_URL,
         headers={"Content-Type": "application/json"},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1000}
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 4000}
         })
     response.raise_for_status()
     return response.json()['candidates'][0]['content']['parts'][0]['text']

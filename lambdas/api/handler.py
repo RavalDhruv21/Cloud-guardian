@@ -296,7 +296,7 @@ Answer questions specifically about their infrastructure. Be concise and actiona
             ],
             'generationConfig': {
                 'temperature': 0.3,
-                'maxOutputTokens': 400
+                'maxOutputTokens': 2000
             }
         }
     )
