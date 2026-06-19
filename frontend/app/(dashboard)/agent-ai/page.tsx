@@ -201,49 +201,47 @@ If asked about specific instances, refer to the real instance IDs from the conte
     // Replaced height calculation to properly fill the remaining space without overflowing
     <div className="flex flex-col h-[calc(100vh-140px)] animate-entrance w-full">
 
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <div>
-          <h1 className="text-lg font-semibold text-white">Agent AI</h1>
-          <p className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.5)'}}>
-            {contextLoading ? 'Loading your AWS account data...' : 'Knows your real AWS account — ask anything'}
-          </p>
+      {/* Header & Context */}
+      <div className="flex items-start justify-between mb-4 flex-shrink-0 bg-[rgba(255,255,255,0.02)] p-4 rounded-xl border border-[rgba(255,255,255,0.05)]">
+        <div className="flex flex-col gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-white">Agent AI</h1>
+            <p className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.5)'}}>
+              {contextLoading ? 'Loading your AWS account data...' : 'Knows your real AWS account — ask anything'}
+            </p>
+          </div>
+          {/* Compact Context Chips */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {contextLoading ? (
+              <span className="text-xs text-white/50">Fetching live data...</span>
+            ) : contextChips.map(chip => (
+              <span
+                key={chip.label}
+                className="text-[11px] px-2 py-1 rounded-md font-bold shadow-sm"
+                style={{background: chip.bg, color: chip.color, border: `1px solid ${chip.bg}`}}
+              >
+                {chip.label}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 mt-1">
           <button
             onClick={loadContext}
             disabled={contextLoading}
-            className="text-xs px-4 py-2 rounded-full border transition-all disabled:opacity-40 hover:bg-white/5"
+            className="text-xs px-4 py-2 rounded-lg border transition-all disabled:opacity-40 hover:bg-white/5"
             style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'}}
           >
-            {contextLoading ? 'Loading...' : 'Refresh context'}
+            {contextLoading ? 'Loading...' : 'Refresh'}
           </button>
           <div
-            className="flex items-center gap-2 text-xs px-4 py-2 rounded-full font-medium shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg font-medium shadow-[0_0_15px_rgba(16,185,129,0.15)]"
             style={{background: 'rgba(16,185,129,0.1)', color: '#34D399', border: '1px solid rgba(16,185,129,0.2)'}}
           >
-            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-            {contextLoading ? 'Syncing...' : 'Context active'}
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
+            {contextLoading ? 'Syncing...' : 'Active'}
           </div>
         </div>
-      </div>
-
-      {/* Context bar */}
-      <div
-        className="flex items-center gap-2 flex-wrap mb-4 flex-shrink-0 p-3 rounded-xl auth-glass"
-      >
-        <span className="text-xs font-medium uppercase tracking-wider" style={{color: 'rgba(255,255,255,0.4)'}}>AI context:</span>
-        {contextLoading ? (
-          <span className="text-xs text-white/50">Fetching live data...</span>
-        ) : contextChips.map(chip => (
-          <span
-            key={chip.label}
-            className="text-xs px-2.5 py-1 rounded-full font-bold shadow-sm"
-            style={{background: chip.bg, color: chip.color, border: `1px solid ${chip.bg}`}}
-          >
-            {chip.label}
-          </span>
-        ))}
       </div>
 
       {/* Chat area */}
@@ -299,38 +297,40 @@ If asked about specific instances, refer to the real instance IDs from the conte
               </div>
             </div>
           )}
+
+          {/* Suggested questions moved inside chat area */}
+          {messages.length <= 1 && !contextLoading && (
+            <div className="flex flex-wrap gap-2 mt-2 ml-12">
+              {suggestedQuestions.map(q => (
+                <button
+                  key={q}
+                  onClick={() => handleSendWithText(q)}
+                  className="text-xs px-4 py-2 rounded-lg transition-all"
+                  style={{
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    color: 'rgba(255,255,255,0.6)'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.borderColor = 'rgba(52,211,153,0.5)'
+                    e.currentTarget.style.color = '#34D399'
+                    e.currentTarget.style.background = 'rgba(52,211,153,0.05)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                    e.currentTarget.style.color = 'rgba(255,255,255,0.6)'
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Suggested questions */}
-      {messages.length <= 1 && !contextLoading && (
-        <div className="flex flex-wrap gap-2 mb-4 flex-shrink-0">
-          {suggestedQuestions.map(q => (
-            <button
-              key={q}
-              onClick={() => handleSendWithText(q)}
-              className="text-xs px-4 py-2 rounded-full transition-all"
-              style={{
-                background: 'rgba(255,255,255,0.02)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: 'rgba(255,255,255,0.6)'
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.borderColor = 'rgba(52,211,153,0.5)'
-                e.currentTarget.style.color = '#34D399'
-                e.currentTarget.style.background = 'rgba(52,211,153,0.05)'
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
-                e.currentTarget.style.color = 'rgba(255,255,255,0.6)'
-                e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
-              }}
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Removed Suggested questions from here (moved inside chat area) */}
 
       {/* Input */}
       <div className="flex gap-3 flex-shrink-0">
