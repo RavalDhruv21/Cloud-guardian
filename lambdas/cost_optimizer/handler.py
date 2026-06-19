@@ -138,8 +138,30 @@ def downsize_recommendation(instance_type):
         'c5.xlarge': 'c5.large', 'r5.xlarge': 'r5.large'}
     return downsize_map.get(instance_type)
 
+from boto3.dynamodb.conditions import Key, Attr
+
 def save_suggestion(account_id, user_id, region, resource_id, resource_type, issue, recommendation, saving_per_month, instance_type='', days_idle=0):
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
+    
+    existing = table.query(
+        KeyConditionExpression=Key('account_id').eq(account_id),
+        FilterExpression=Attr('resource_id').eq(resource_id) & Attr('status').eq('open')
+    )
+    
+    if existing.get('Items'):
+        item = existing['Items'][0]
+        table.update_item(
+            Key={'account_id': account_id, 'timestamp': item['timestamp']},
+            UpdateExpression="SET issue = :i, recommendation = :r, saving_per_month = :s, days_idle = :d",
+            ExpressionAttributeValues={
+                ':i': issue,
+                ':r': recommendation,
+                ':s': Decimal(str(round(saving_per_month, 2))),
+                ':d': days_idle
+            }
+        )
+        return
+
     table.put_item(Item={
         'account_id': account_id,
         'timestamp': datetime.now(timezone.utc).isoformat(),

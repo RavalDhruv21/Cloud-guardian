@@ -265,8 +265,17 @@ export default function CostOptimizerPage() {
                             </div>
                           </div>
                         </div>
-
-                        <div className="text-xs text-white/40 mb-3 font-mono">{item.resource_id}</div>
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="text-xs text-white/40 font-mono">{item.resource_id}</div>
+                          {item.timestamp && (
+                            <>
+                              <div className="text-xs text-white/20">•</div>
+                              <div className="text-xs text-white/40">
+                                {new Date(item.timestamp).toLocaleString()}
+                              </div>
+                            </>
+                          )}
+                        </div>
 
                         {/* Recommendation */}
                         <div className="rounded-xl p-4 mb-4"
