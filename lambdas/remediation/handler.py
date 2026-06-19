@@ -70,19 +70,31 @@ def revert_open_port_22(sg_id, role_arn, region, account_id, user_id):
             if rule.get('FromPort') == 22 and rule.get('ToPort') == 22:
                 for ip_range in rule.get('IpRanges', []):
                     if ip_range.get('CidrIp') == '0.0.0.0/0':
-                        ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=[{
-                            'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22,
-                            'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
-                        }])
-                        secs = (datetime.now(timezone.utc) - start_time).seconds
+                        reverted = False
+                        revert_secs = None
+                        try:
+                            ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=[{
+                                'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22,
+                                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                            }])
+                            reverted = True
+                            revert_secs = (datetime.now(timezone.utc) - start_time).seconds
+                        except Exception as e:
+                            print(f"Error revoking port 22: {e}")
+                            
                         save_security_event('Port 22 opened to 0.0.0.0/0', sg_id,
-                            f'port 22 to 0.0.0.0/0 auto-reverted', account_id=account_id, user_id=user_id,
-                            reverted=True, revert_seconds=secs)
-                        send_alert(f"[CRITICAL] Port 22 auto-reverted — {sg_id}",
-                            f"Account {account_id}: SG {sg_id} had port 22 open. Reverted in {secs}s.")
+                            f'port 22 to 0.0.0.0/0 detected', account_id=account_id, user_id=user_id,
+                            reverted=reverted, revert_seconds=revert_secs)
+                            
+                        if reverted:
+                            send_alert(f"[CRITICAL] Port 22 auto-reverted — {sg_id}",
+                                f"Account {account_id}: SG {sg_id} had port 22 open. Reverted in {revert_secs}s.")
+                        else:
+                            send_alert(f"[CRITICAL] Port 22 open (Remediation Failed) — {sg_id}",
+                                f"Account {account_id}: SG {sg_id} has port 22 open but auto-remediation failed.")
                         return True
     except Exception as e:
-        print(f"Error reverting port 22: {e}")
+        print(f"Error analyzing port 22: {e}")
     return False
 
 WHITELISTED_BUCKETS = ['cloud-guardian-4626']
@@ -93,29 +105,41 @@ def revert_public_s3(bucket_name, role_arn, region, account_id, user_id):
         return False
     s3 = get_assumed_client('s3', role_arn, region)
     start_time = datetime.now(timezone.utc)
+    
+    reverted = False
+    revert_secs = None
+    
     try:
         s3.put_public_access_block(Bucket=bucket_name, PublicAccessBlockConfiguration={
             'BlockPublicAcls': True, 'IgnorePublicAcls': True,
             'BlockPublicPolicy': True, 'RestrictPublicBuckets': True
         })
-        secs = (datetime.now(timezone.utc) - start_time).seconds
-        save_security_event('S3 bucket made public', bucket_name,
-            f'Bucket {bucket_name} public access auto-blocked', account_id=account_id,
-            user_id=user_id, reverted=True, revert_seconds=secs)
-        send_alert(f"[CRITICAL] S3 public access blocked — {bucket_name}",
-            f"Account {account_id}: Bucket {bucket_name} blocked in {secs}s.")
-        return True
+        reverted = True
+        revert_secs = (datetime.now(timezone.utc) - start_time).seconds
     except Exception as e:
         print(f"Error blocking S3: {e}")
-        return False
+        
+    save_security_event('S3 bucket made public', bucket_name,
+        f'Bucket {bucket_name} public access block missing or disabled', account_id=account_id,
+        user_id=user_id, reverted=reverted, revert_seconds=revert_secs)
+        
+    if reverted:
+        send_alert(f"[CRITICAL] S3 public access blocked — {bucket_name}",
+            f"Account {account_id}: Bucket {bucket_name} blocked in {revert_secs}s.")
+    else:
+        send_alert(f"[CRITICAL] S3 public access detected (Remediation Failed) — {bucket_name}",
+            f"Account {account_id}: Bucket {bucket_name} is public but auto-remediation failed.")
+    
+    return reverted
     
     
-def handle_root_account_usage(event_time, source_ip, account_id=None):
+def handle_root_account_usage(event_time, source_ip, account_id=None, user_id=None):
     save_security_event(
         'Root account login detected',
         'AWS Root Account',
         f'Root user logged in from IP {source_ip} at {event_time} — root should never be used for daily operations',
         account_id=account_id,
+        user_id=user_id,
         reverted=False,
         revert_seconds=None
     )
@@ -176,7 +200,7 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
 def main(event=None, context=None):
     print("Remediation Lambda triggered")
 
-    if not event:
+    if not event or (event.get('source') == 'aws.events' and event.get('detail-type') == 'Scheduled Event'):
         # Manual scan — run for ALL connected users
         users = get_all_users()
         print(f"Manual scan for {len(users)} accounts")
@@ -214,6 +238,11 @@ def main(event=None, context=None):
     account_id = event_account
     user_id = matching_user.get('user_id') if matching_user else 'default-user'
 
+    # Always evaluate Root identity first, separately from the event_name routing
+    if user_identity.get('type') == 'Root':
+        print("Root account usage detected")
+        handle_root_account_usage(event_time, source_ip, account_id=account_id, user_id=user_id)
+
     if event_name == 'AuthorizeSecurityGroupIngress':
         sg_id = detail.get('requestParameters', {}).get('groupId', '')
         if sg_id:
@@ -237,10 +266,6 @@ def main(event=None, context=None):
                     revert_public_s3(bucket_name, role_arn, region, account_id, user_id)
             else:
                 revert_public_s3(bucket_name, role_arn, region, account_id, user_id)
-    # Rule 3 — Root account usage
-    elif user_identity.get('type') == 'Root':
-        print("Root account usage detected")
-        handle_root_account_usage(event_time, source_ip, account_id=account_id)
 
     return {'statusCode': 200, 'body': 'Remediation check complete'}
 
