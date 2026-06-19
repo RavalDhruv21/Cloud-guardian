@@ -29,8 +29,19 @@ api.interceptors.request.use((config) => {
 const getRegion = () =>
   typeof window !== 'undefined' ? localStorage.getItem('selected_region') || 'us-east-1' : 'us-east-1'
 
+const isLocalConnected = () => {
+  if (typeof window === 'undefined') return true;
+  try {
+    const stored = localStorage.getItem('cg_user_profile')
+    if (!stored) return false;
+    const profile = JSON.parse(stored)
+    return !!(profile.aws_account_id || profile.aws_role_arn)
+  } catch { return false }
+}
+
 // ── Metrics ───────────────────────────────────────────────
 export const getMetrics = async () => {
+  if (!isLocalConnected()) return { metrics: [] };
   const region = getRegion()
   const token = localStorage.getItem('cg_token') || ''
   const userId = getUserId()
@@ -42,6 +53,7 @@ export const getMetrics = async () => {
 }
 
 export const getMetricsHistory = async (instanceId: string) => {
+  if (!isLocalConnected()) return { history: [] };
   const region = getRegion()
   const token = localStorage.getItem('cg_token') || ''
   const userId = getUserId()
@@ -58,6 +70,7 @@ export const getAnomalies = async (filters?: {
   resolved?: boolean
   account_id?: string
 }) => {
+  if (!isLocalConnected()) return { anomalies: [] };
   const region = getRegion()
   const userId = getUserId()
   const res = await api.get('/anomalies', { params: { ...filters, region, user_id: userId } })
@@ -71,6 +84,7 @@ export const resolveAnomaly = async (instanceId: string, timestamp: string) => {
 
 // ── Cost suggestions ──────────────────────────────────────
 export const getCostSuggestions = async (accountId?: string) => {
+  if (!isLocalConnected()) return { suggestions: [] };
   const region = getRegion()
   const userId = getUserId()
   const res = await api.get('/cost-suggestions', { params: { account_id: accountId, region, user_id: userId } })
@@ -89,6 +103,7 @@ export const stopResource = async (resourceId: string, resourceType: string) => 
 
 // ── Security events ───────────────────────────────────────
 export const getSecurityEvents = async (accountId?: string) => {
+  if (!isLocalConnected()) return { events: [] };
   const region = getRegion()
   const userId = getUserId()
   const res = await api.get('/security-events', { params: { account_id: accountId, region, user_id: userId } })
@@ -97,6 +112,7 @@ export const getSecurityEvents = async (accountId?: string) => {
 
 // ── Audit logs ────────────────────────────────────────────
 export const getAuditLogs = async (region?: string) => {
+  if (!isLocalConnected()) return { logs: [] };
   const r = region || getRegion()
   const userId = getUserId()
   const res = await api.get('/audit-logs', { params: { region: r, user_id: userId } })
@@ -105,6 +121,7 @@ export const getAuditLogs = async (region?: string) => {
 
 // ── Reports ───────────────────────────────────────────────
 export const getReports = async () => {
+  if (!isLocalConnected()) return { reports: [] };
   const userId = getUserId()
   const res = await api.get('/reports', { params: { user_id: userId } })
   return res.data

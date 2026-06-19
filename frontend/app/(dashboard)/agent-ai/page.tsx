@@ -98,7 +98,7 @@ export default function AgentAIPage() {
       setMessages([{
         role: 'assistant',
         content: greeting,
-        timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }])
 
     } catch (err) {
@@ -109,7 +109,7 @@ export default function AgentAIPage() {
       setMessages([{
         role: 'assistant',
         content: "Hi! I'm your Cloud Guardian AI assistant. I'm having trouble fetching your live data right now, but I can still answer questions about your AWS infrastructure. What would you like to know?",
-        timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }])
     } finally {
       setContextLoading(false)
@@ -123,7 +123,7 @@ export default function AgentAIPage() {
     const userMsg: Message = {
       role: 'user',
       content: text,
-      timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
     setMessages(prev => [...prev, userMsg])
     setInput('')
@@ -170,14 +170,14 @@ Your goal is to provide highly accurate, detailed, and insightful responses.
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: aiText,
-        timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }])
 
     } catch (error) {
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: 'Sorry — I had trouble connecting. Please check your API key and try again.',
-        timestamp: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }])
     }
 
@@ -209,26 +209,42 @@ Your goal is to provide highly accurate, detailed, and insightful responses.
     // Replaced height calculation to properly fill the remaining space without overflowing
     <div className="flex flex-col h-[calc(100vh-140px)] animate-entrance w-full">
 
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <div>
-          <h1 className="text-lg font-semibold text-white">Agent AI</h1>
-          <p className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.5)'}}>
-            {contextLoading ? 'Loading your AWS account data...' : 'Knows your real AWS account — ask anything'}
-          </p>
+      {/* Header & Context */}
+      <div className="flex items-start justify-between mb-4 flex-shrink-0 bg-[rgba(255,255,255,0.02)] p-4 rounded-xl border border-[rgba(255,255,255,0.05)]">
+        <div className="flex flex-col gap-3">
+          <div>
+            <h1 className="text-lg font-semibold text-white">Agent AI</h1>
+            <p className="text-xs mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              {contextLoading ? 'Loading your AWS account data...' : 'Knows your real AWS account — ask anything'}
+            </p>
+          </div>
+          {/* Compact Context Chips */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {contextLoading ? (
+              <span className="text-xs text-white/50">Fetching live data...</span>
+            ) : contextChips.map(chip => (
+              <span
+                key={chip.label}
+                className="text-[11px] px-2 py-1 rounded-md font-bold shadow-sm"
+                style={{ background: chip.bg, color: chip.color, border: `1px solid ${chip.bg}` }}
+              >
+                {chip.label}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-2 mt-1">
+        <div className="flex items-center gap-3 mt-1">
           <button
             onClick={loadContext}
             disabled={contextLoading}
-            className="text-[11px] px-3 py-1.5 rounded-md border transition-all disabled:opacity-40 hover:bg-white/5"
-            style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'}}
+            className="text-xs px-4 py-2 rounded-lg border transition-all disabled:opacity-40 hover:bg-white/5"
+            style={{ borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}
           >
             {contextLoading ? 'Loading...' : 'Refresh'}
           </button>
           <div
-            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-md font-medium shadow-[0_0_15px_rgba(16,185,129,0.15)]"
-            style={{background: 'rgba(16,185,129,0.1)', color: '#34D399', border: '1px solid rgba(16,185,129,0.2)'}}
+            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg font-medium shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+            style={{ background: 'rgba(16,185,129,0.1)', color: '#34D399', border: '1px solid rgba(16,185,129,0.2)' }}
           >
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></div>
             {contextLoading ? 'Syncing...' : 'Active'}
@@ -236,27 +252,11 @@ Your goal is to provide highly accurate, detailed, and insightful responses.
         </div>
       </div>
 
-      {/* Ultra-compact Context Chips */}
-      <div className="flex items-center gap-2 flex-wrap mb-3 flex-shrink-0">
-        <span className="text-[10px] font-bold uppercase tracking-wider mr-1" style={{color: 'rgba(255,255,255,0.3)'}}>Context:</span>
-        {contextLoading ? (
-          <span className="text-[11px] text-white/50">Fetching live data...</span>
-        ) : contextChips.map(chip => (
-          <span
-            key={chip.label}
-            className="text-[10px] px-2 py-0.5 rounded-md font-bold shadow-sm"
-            style={{background: chip.bg, color: chip.color, border: `1px solid ${chip.bg}`}}
-          >
-            {chip.label}
-          </span>
-        ))}
-      </div>
-
       {/* Chat area */}
       <div
         ref={chatContainerRef}
         className="flex-1 overflow-y-auto auth-glass rounded-2xl p-6 mb-4 custom-scrollbar"
-        style={{minHeight: 0}}
+        style={{ minHeight: 0 }}
       >
         <div className="flex flex-col gap-6">
           {messages.map((msg, i) => (
@@ -281,9 +281,9 @@ Your goal is to provide highly accurate, detailed, and insightful responses.
                     borderBottomRightRadius: msg.role === 'user' ? 4 : 16,
                     borderBottomLeftRadius: msg.role === 'assistant' ? 4 : 16,
                   }}
-                  dangerouslySetInnerHTML={{__html: formatMessage(msg.content)}}
+                  dangerouslySetInnerHTML={{ __html: formatMessage(msg.content) }}
                 />
-                <span className="text-xs mt-1" style={{color: 'rgba(255,255,255,0.3)'}}>{msg.timestamp}</span>
+                <span className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>{msg.timestamp}</span>
               </div>
             </div>
           ))}
@@ -292,15 +292,15 @@ Your goal is to provide highly accurate, detailed, and insightful responses.
             <div className="flex gap-4">
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0 mt-1"
-                style={{background: 'rgba(16,185,129,0.15)', color: '#34D399'}}
+                style={{ background: 'rgba(16,185,129,0.15)', color: '#34D399' }}
               >
                 🤖
               </div>
-              <div className="px-5 py-4 rounded-2xl" style={{background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderBottomLeftRadius: 4}}>
+              <div className="px-5 py-4 rounded-2xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', borderBottomLeftRadius: 4 }}>
                 <div className="flex gap-1.5 items-center">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{animationDelay: '0ms'}}></div>
-                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{animationDelay: '150ms'}}></div>
-                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{animationDelay: '300ms'}}></div>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500/50 animate-bounce" style={{ animationDelay: '300ms' }}></div>
                 </div>
               </div>
             </div>
@@ -363,7 +363,7 @@ Your goal is to provide highly accurate, detailed, and insightful responses.
           onClick={handleSend}
           disabled={loading || !input.trim() || contextLoading}
           className="px-6 py-4 rounded-xl text-white text-sm font-bold transition-all disabled:opacity-40"
-          style={{background: 'linear-gradient(135deg, #0F6E56 0%, #185FA5 100%)', boxShadow: '0 4px 15px rgba(15,110,86,0.3)'}}
+          style={{ background: 'linear-gradient(135deg, #0F6E56 0%, #185FA5 100%)', boxShadow: '0 4px 15px rgba(15,110,86,0.3)' }}
         >
           Send →
         </button>
