@@ -220,7 +220,7 @@ def scan_account(role_arn, region, account_id, user_id):
             saving = size_gb * {'gp2': 0.10, 'gp3': 0.08, 'io1': 0.125}.get(vol_type, 0.10)
             create_time = vol.get('CreateTime', datetime.now(timezone.utc))
             days = (datetime.now(timezone.utc) - create_time.replace(tzinfo=timezone.utc)).days
-            if days >= 0:
+            if days >= 3:
                 save_suggestion(account_id, user_id, region, vol['VolumeId'], 'EBS',
                     f'EBS unattached for {days} days',
                     f'Delete {size_gb}GB {vol_type} volume. Saving ${round(saving, 2)}/month',
