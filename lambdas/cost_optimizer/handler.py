@@ -3,6 +3,7 @@ import boto3
 import os
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
+from boto3.dynamodb.conditions import Key, Attr
 
 dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
 
@@ -138,8 +139,6 @@ def downsize_recommendation(instance_type):
         'c5.xlarge': 'c5.large', 'r5.xlarge': 'r5.large'}
     return downsize_map.get(instance_type)
 
-from boto3.dynamodb.conditions import Key, Attr
-
 def save_suggestion(account_id, user_id, region, resource_id, resource_type, issue, recommendation, saving_per_month, instance_type='', days_idle=0):
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
     
@@ -221,7 +220,7 @@ def scan_account(role_arn, region, account_id, user_id):
             saving = size_gb * {'gp2': 0.10, 'gp3': 0.08, 'io1': 0.125}.get(vol_type, 0.10)
             create_time = vol.get('CreateTime', datetime.now(timezone.utc))
             days = (datetime.now(timezone.utc) - create_time.replace(tzinfo=timezone.utc)).days
-            if days >= 3:
+            if days >= 0:
                 save_suggestion(account_id, user_id, region, vol['VolumeId'], 'EBS',
                     f'EBS unattached for {days} days',
                     f'Delete {size_gb}GB {vol_type} volume. Saving ${round(saving, 2)}/month',
