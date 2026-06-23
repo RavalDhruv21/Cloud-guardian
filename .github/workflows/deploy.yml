@@ -68,7 +68,6 @@ jobs:
           NEXT_PUBLIC_REGION: us-east-1
           NEXT_PUBLIC_API_URL: https://06d5dalth2.execute-api.us-east-1.amazonaws.com/prod
           NEXT_PUBLIC_AWS_ACCOUNT_ID: "808715035605"
-          NEXT_PUBLIC_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cd frontend
           npm ci

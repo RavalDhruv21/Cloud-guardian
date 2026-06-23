@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { getMetrics, getAnomalies, getCostSuggestions } from '@/lib/api'
+import { getMetrics, getAnomalies, getCostSuggestions, askAgent } from '@/lib/api'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -129,43 +129,11 @@ export default function AgentAIPage() {
     setInput('')
 
     try {
-      const systemPrompt = `You are Cloud Guardian AI — an expert AWS infrastructure assistant.
-You have real-time context of the user's AWS account:
-${accountContext}
-
-Your goal is to provide highly accurate, detailed, and insightful responses. 
-- Summarize the current situation alongside past historical information to give a complete picture.
-- Suggest appropriate actions, optimizations, and technical details.
-- Always tailor your advice specifically to the real infrastructure data shown above.
-- Use formatting (bullet points, bold text) to structure complex information.
-- Provide comprehensive answers that fully resolve the user's inquiry without artificial length constraints.`;
-
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.NEXT_PUBLIC_GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [
-            ...messages.filter((m, i) => !(i === 0 && m.role === 'assistant')).map(m => ({
-              role: m.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: m.content }]
-            })),
-            { role: 'user', parts: [{ text }] }
-          ],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 500
-          }
-        })
-      })
-
-      const data = await response.json()
-      if (!response.ok) {
-        console.error("Gemini API Error:", data);
-      }
-      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || `Error from Gemini: ${data.error?.message || JSON.stringify(data)}`
+      const history = messages.filter((m, i) => !(i === 0 && m.role === 'assistant'))
+      
+      const response = await askAgent(text, { accountContext }, history)
+      
+      const aiText = response.reply || 'Error generating response from backend.'
 
       setMessages(prev => [...prev, {
         role: 'assistant',

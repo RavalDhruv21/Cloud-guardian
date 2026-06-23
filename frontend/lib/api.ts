@@ -135,9 +135,9 @@ export const getReportContent = async (key: string) => {
 }
 
 // ── Agent AI ──────────────────────────────────────────────
-export const askAgent = async (message: string, context?: object) => {
+export const askAgent = async (message: string, context?: object, history?: object[]) => {
   const userId = getUserId()
-  const res = await api.post('/agent', { message, context, user_id: userId })
+  const res = await api.post('/agent', { message, context, history, user_id: userId })
   return res.data
 }
 

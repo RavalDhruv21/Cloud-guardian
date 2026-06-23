@@ -260,6 +260,7 @@ def ask_agent(body):
     import requests as req
     message = body.get('message', '')
     context = body.get('context', {})
+    history = body.get('history', [])
     user_id = body.get('user_id', 'default-user')
     gemini_key = os.getenv('GEMINI_API_KEY')
 
@@ -281,8 +282,17 @@ def ask_agent(body):
 Current account state (Account: {account_id or 'unknown'}, Region: {region}):
 - Recent metrics: {json.dumps(recent_metrics, cls=DecimalEncoder)[:500]}
 - Unresolved anomalies: {json.dumps(unresolved, cls=DecimalEncoder)[:500]}
-- Additional context: {json.dumps(context)[:200]}
+- Additional context: {json.dumps(context)[:2000]}
 Answer questions specifically about their infrastructure. Be concise and actionable."""
+
+    # Format history for Gemini
+    contents = []
+    for msg in history:
+        role = 'model' if msg.get('role') == 'assistant' else 'user'
+        contents.append({'role': role, 'parts': [{'text': msg.get('content', '')}]})
+    
+    # Append the current message
+    contents.append({'role': 'user', 'parts': [{'text': message}]})
 
     gemini_response = req.post(
         f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}',
@@ -291,9 +301,7 @@ Answer questions specifically about their infrastructure. Be concise and actiona
             'systemInstruction': {
                 'parts': [{'text': system_prompt}]
             },
-            'contents': [
-                {'parts': [{'text': message}]}
-            ],
+            'contents': contents,
             'generationConfig': {
                 'temperature': 0.3,
                 'maxOutputTokens': 2000
