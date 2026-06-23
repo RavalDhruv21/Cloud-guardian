@@ -405,7 +405,7 @@ export default function DashboardLayout({
                   {profile.name || 'User'}
                 </div>
                 <div className="text-[10px] uppercase font-medium tracking-wider" style={{color: 'rgba(16,185,129,0.8)'}}>
-                  Pro · Beta
+                  Free
                 </div>
               </div>
             </div>
