@@ -273,8 +273,8 @@ export default function MetricsPage() {
                     tick={{fontSize: 10, fill: 'rgba(255,255,255,0.4)'}}
                     tickLine={false}
                     axisLine={false}
-                    domain={[0, 100]}
-                    tickFormatter={v => `${v}%`}
+                    domain={['auto', 'auto']}
+                    tickFormatter={v => `${Number(v).toFixed(2)}%`}
                   />
                   <Tooltip
                     contentStyle={{fontSize: 12, background: 'rgba(5,11,24,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff'}}
