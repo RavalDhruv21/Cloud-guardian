@@ -113,18 +113,9 @@ export default function SignupPage() {
             </div>
           </Link>
           <h1 className="text-2xl font-bold text-white mb-2" style={{ letterSpacing: '-0.02em' }}>Create your account</h1>
-          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.4)' }}>Free forever · No credit card required</p>
+
         </div>
 
-        {/* Beta banner */}
-        <div className="rounded-xl px-4 py-3 text-center mb-6" style={{
-          background: 'rgba(16,185,129,0.08)',
-          border: '1px solid rgba(16,185,129,0.2)',
-        }}>
-          <span className="text-xs font-medium" style={{ color: '#6EE7B7' }}>
-            🎉 Beta — Full Pro features completely free
-          </span>
-        </div>
 
         {/* Card */}
         <div className="auth-glass p-8">

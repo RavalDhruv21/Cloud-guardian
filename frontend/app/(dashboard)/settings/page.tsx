@@ -426,7 +426,7 @@ export default function SettingsPage() {
                       {label: 'Auth provider', value: 'AWS Cognito'},
                       {label: 'Region', value: profile.aws_region || 'us-east-1'},
                       {label: 'Account ID', value: profile.aws_account_id || '—'},
-                      {label: 'Plan', value: 'Pro · Beta'},
+                      {label: 'Plan', value: 'Free'},
                     ].map(item => (
                       <div key={item.label}>
                         <div className="text-xs text-white/40 mb-1">{item.label}</div>

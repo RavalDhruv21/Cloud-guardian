@@ -146,21 +146,6 @@ export default function LandingPage() {
       <section className="relative pt-36 pb-24 px-6" style={{ zIndex: 1 }}>
         <div className="max-w-4xl mx-auto text-center">
 
-          {/* Beta badge */}
-          <div className="animate-on-scroll inline-flex items-center gap-2 rounded-full px-5 py-2 mb-8" style={{
-            background: 'rgba(16,185,129,0.08)',
-            border: '1px solid rgba(16,185,129,0.2)',
-          }}>
-            <div className="w-2 h-2 rounded-full" style={{
-              background: '#10B981',
-              boxShadow: '0 0 8px rgba(16,185,129,0.6)',
-              animation: 'pulse-subtle 2s ease-in-out infinite',
-            }} />
-            <span className="text-xs font-medium" style={{ color: '#6EE7B7' }}>
-              Beta — All Pro features free during testing
-            </span>
-          </div>
-
           {/* Heading */}
           <h1 className="animate-on-scroll text-5xl md:text-6xl font-extrabold leading-tight mb-7" style={{ letterSpacing: '-0.03em' }}>
             AI-powered guardian for your
@@ -194,9 +179,7 @@ export default function LandingPage() {
             </Link>
           </div>
 
-          <p className="animate-on-scroll stagger-4 text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
-            No credit card required · Free forever
-          </p>
+
         </div>
 
         {/* Hero glow beneath CTA */}
@@ -235,7 +218,7 @@ export default function LandingPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 relative">
             {/* Connecting line (desktop) */}
-            <div className="hidden md:block absolute top-10 left-[12%] right-[12%] h-px" style={{
+            <div className="hidden md:block absolute -top-[5px] left-[12%] right-[12%] h-px" style={{
               background: 'linear-gradient(90deg, transparent, rgba(16,185,129,0.2), rgba(6,182,212,0.2), transparent)',
             }} />
 
@@ -319,23 +302,10 @@ export default function LandingPage() {
       {/* ═══════════ PRICING ═══════════ */}
       <section className="relative py-24 px-6" style={{ zIndex: 1 }}>
         <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-5">
+          <div className="text-center mb-12">
             <h2 className="animate-on-scroll text-3xl md:text-4xl font-bold mb-4" style={{ letterSpacing: '-0.02em' }}>
               Simple pricing
             </h2>
-            <p className="animate-on-scroll stagger-1 text-sm" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              All plans include full Pro features during beta
-            </p>
-          </div>
-
-          {/* Beta banner */}
-          <div className="animate-on-scroll stagger-2 rounded-2xl px-6 py-3 text-center mb-12" style={{
-            background: 'rgba(16,185,129,0.06)',
-            border: '1px solid rgba(16,185,129,0.15)',
-          }}>
-            <span className="text-sm font-medium" style={{ color: '#6EE7B7' }}>
-              🎉 Beta period — every user gets Pro features completely free
-            </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

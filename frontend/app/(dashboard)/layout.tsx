@@ -308,10 +308,7 @@ export default function DashboardLayout({
               CG
             </div>
             <div>
-              <div className="text-sm font-semibold text-white tracking-tight">Cloud Guardian</div>
-              <div className="text-[10px] uppercase tracking-wider font-medium" style={{color: 'rgba(16,185,129,0.8)'}}>
-                Pro Edition
-              </div>
+              <div className="font-bold text-white tracking-tight">Cloud Guardian</div>
             </div>
           </Link>
         </div>
