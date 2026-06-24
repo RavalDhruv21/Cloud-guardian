@@ -75,7 +75,8 @@ jobs:
 
       - name: Deploy Frontend to S3
         run: |
-          aws s3 sync frontend/out s3://cloud-guardian-4626 --delete --region us-east-1
+          aws s3 sync frontend/out s3://cloud-guardian-4626 --include "_next/static/*" --exclude "*" --cache-control "public, max-age=31536000, immutable" --delete --region us-east-1
+          aws s3 sync frontend/out s3://cloud-guardian-4626 --exclude "_next/static/*" --cache-control "public, max-age=0, must-revalidate" --delete --region us-east-1
 
       - name: Apply S3 Bucket Policy
         run: |
@@ -90,7 +91,7 @@ jobs:
 
       - name: Invalidate CloudFront
         run: |
-          aws cloudfront create-invalidation --distribution-id $(aws cloudfront list-distributions --query "DistributionList.Items[0].Id" --output text) --paths "/*"
+          aws cloudfront create-invalidation --distribution-id $(aws cloudfront list-distributions --query "DistributionList.Items[0].Id" --output text) --paths "/*.html" "/"
 
 # ==========================================
 # MANUAL CLOUDFRONT 404 CONFIGURATION NOTE
