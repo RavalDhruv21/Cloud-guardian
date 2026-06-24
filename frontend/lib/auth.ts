@@ -104,6 +104,8 @@ const clearSession = async () => {
   localStorage.removeItem('aws_connected')
   localStorage.removeItem('connected_account_id')
   localStorage.removeItem('cg_user')
+  localStorage.removeItem('cg_token')
+  localStorage.removeItem('cg_refresh_token')
   // Properly expire the cookie
   document.cookie = 'cg_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
 }

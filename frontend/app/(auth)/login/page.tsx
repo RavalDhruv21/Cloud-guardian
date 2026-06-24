@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { loginUser, isValidEmail, getCurrentUser } from '@/lib/auth'
-import { signInWithRedirect } from 'aws-amplify/auth'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -133,7 +132,12 @@ export default function LoginPage() {
           {/* Google button */}
           <button
             type="button"
-            onClick={() => signInWithRedirect({ provider: 'Google' })}
+            onClick={() => {
+              const domain = process.env.NEXT_PUBLIC_COGNITO_DOMAIN
+              const clientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID
+              const redirect = encodeURIComponent(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000/auth/callback'}`)
+              window.location.href = `https://${domain}/oauth2/authorize?client_id=${clientId}&response_type=code&scope=email+openid&redirect_uri=${redirect}&identity_provider=Google`
+            }}
             className="google-btn mb-6"
           >
             <svg width="18" height="18" viewBox="0 0 18 18">

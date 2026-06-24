@@ -1,46 +1,73 @@
 'use client'
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
-import { fetchAuthSession, fetchUserAttributes } from 'aws-amplify/auth'
 
 function AuthCallbackInner() {
   const router = useRouter()
-  const [status, setStatus] = useState('Processing secure authentication...')
+  const [status, setStatus] = useState('Processing...')
 
   useEffect(() => {
-    handleAmplifyCallback()
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (!code) {
+      setStatus('No auth code found — redirecting to login...')
+      setTimeout(() => router.push('/login'), 2000)
+      return
+    }
+    exchangeCode(code)
   }, [])
 
-  const handleAmplifyCallback = async () => {
+  const exchangeCode = async (code: string) => {
     try {
-      // Amplify automatically intercepts the ?code= parameter and exchanges it in the background.
-      // We just need to wait until the session is fully established.
-      let session;
-      for (let i = 0; i < 15; i++) {
-        try {
-          session = await fetchAuthSession()
-          if (session.tokens?.accessToken) break;
-        } catch { }
-        // Poll every 400ms while Amplify negotiates the OAuth exchange
-        await new Promise(r => setTimeout(r, 400))
-      }
+      const domain = process.env.NEXT_PUBLIC_COGNITO_DOMAIN
+      const clientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID
+      const redirect = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000/auth/callback'
 
-      if (!session?.tokens?.accessToken) {
-        setStatus('Authentication timed out or failed. Redirecting to login...')
+      const body = new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId!,
+        code,
+        redirect_uri: redirect,
+      })
+
+      const res = await fetch(`https://${domain}/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      })
+
+      if (!res.ok) {
+        const errText = await res.text()
+        console.error('Token exchange failed:', errText)
+        setStatus(`Token exchange failed: ${errText}`)
         setTimeout(() => router.push('/login'), 3000)
         return
       }
 
-      // ── Retrieve User Identity ──
-      const attrs = await fetchUserAttributes()
-      const email = attrs.email || ''
-      const name = attrs.name || attrs.given_name || email.split('@')[0] || 'User'
+      const tokens = await res.json()
+      if (!tokens.access_token) {
+        setStatus(`No access token: ${tokens.error || 'unknown error'}`)
+        setTimeout(() => router.push('/login'), 3000)
+        return
+      }
 
-      // ── UI Caching ──
+      // Securely store tokens for the custom hybrid refresher in api.ts
+      localStorage.setItem('cg_token', tokens.access_token)
+      if (tokens.refresh_token) {
+        localStorage.setItem('cg_refresh_token', tokens.refresh_token)
+      }
+
+      // Decode ID token to get user info for UI
+      const idToken = tokens.id_token
+      const payload = JSON.parse(atob(idToken.split('.')[1]))
+      const email = payload.email || payload['cognito:username'] || payload.sub
+      const name = payload.name || payload.given_name || email?.split('@')[0] || 'User'
+
       localStorage.setItem('cg_user', JSON.stringify({ name, email }))
-      
+
+      // Save session in same format as email/password login
       const googleUser = {
-        id: session.tokens.accessToken.payload.sub?.toString() || '',
+        id: payload.sub,
         name,
         email,
         createdAt: new Date().toISOString()
@@ -48,7 +75,7 @@ function AuthCallbackInner() {
       localStorage.setItem('cg_session', JSON.stringify(googleUser))
       document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
 
-      // ── Fetch or Create Profile ──
+      // Fetch existing profile from DynamoDB
       try {
         const { getUserProfile, updateUserProfile } = await import('@/lib/api')
         const data = await getUserProfile()
@@ -61,7 +88,6 @@ function AuthCallbackInner() {
         }
         
         localStorage.setItem('cg_user_profile', JSON.stringify(profile))
-        
         if (profile.aws_connected) {
             localStorage.setItem('aws_connected', 'true')
             localStorage.setItem('connected_account_id', profile.connected_account_id)

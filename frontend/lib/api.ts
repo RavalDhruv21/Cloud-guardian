@@ -8,23 +8,87 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
-// ── Dynamically fetch fresh token from AWS Amplify ──────────
+// ── Dynamically fetch fresh token from AWS Amplify or Fallback to Custom Refresher ──────────
+const isTokenExpired = (token: string): boolean => {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    // Add 1 minute buffer
+    return (payload.exp * 1000) < (Date.now() + 60000)
+  } catch {
+    return true
+  }
+}
+
 export const getToken = async (): Promise<string> => {
+  // 1. Try Amplify first (for Email/Password users)
   try {
     const session = await fetchAuthSession()
     const token = session.tokens?.accessToken?.toString() || ''
-    if (!token && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
-      localStorage.clear()
-      window.location.href = '/login'
-    }
-    return token
+    if (token) return token
   } catch {
-    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
+    // Amplify session not found, fallback to custom localStorage below
+  }
+
+  // 2. Custom Hybrid Refresher (for Google users)
+  if (typeof window === 'undefined') return ''
+  
+  let token = localStorage.getItem('cg_token')
+  if (!token) {
+    if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
       localStorage.clear()
       window.location.href = '/login'
     }
     return ''
   }
+
+  // Check if token is expired
+  if (isTokenExpired(token)) {
+    const refreshToken = localStorage.getItem('cg_refresh_token')
+    if (!refreshToken) {
+      if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
+        localStorage.clear()
+        window.location.href = '/login'
+      }
+      return ''
+    }
+
+    try {
+      // Refresh the token manually
+      const domain = process.env.NEXT_PUBLIC_COGNITO_DOMAIN
+      const clientId = process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID
+      
+      const body = new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: clientId!,
+        refresh_token: refreshToken
+      })
+
+      const res = await fetch(`https://${domain}/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString()
+      })
+
+      if (!res.ok) throw new Error('Refresh failed')
+      
+      const tokens = await res.json()
+      if (tokens.access_token) {
+        token = tokens.access_token
+        localStorage.setItem('cg_token', token)
+      } else {
+        throw new Error('No access token in refresh response')
+      }
+    } catch (err) {
+      console.error('Failed to refresh token manually:', err)
+      if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
+        localStorage.clear()
+        window.location.href = '/login'
+      }
+      return ''
+    }
+  }
+
+  return token
 }
 
 // Add auth token to every axios request dynamically
