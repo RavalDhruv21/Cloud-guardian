@@ -481,19 +481,27 @@ def get_audit_logs(region='us-east-1', user_id='default-user'):
 
 # ── Auth Verification ──────────────────────────────────────
 def verify_token(event):
-    headers = event.get('headers') or {}
-    auth_header = headers.get('Authorization') or headers.get('authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
+    headers = {k.lower(): str(v) for k, v in (event.get('headers') or {}).items()}
+    auth_header = headers.get('authorization')
+    
+    if not auth_header:
+        multi_headers = {k.lower(): v for k, v in (event.get('multiValueHeaders') or {}).items()}
+        auth_headers_list = multi_headers.get('authorization', [])
+        if auth_headers_list:
+            auth_header = auth_headers_list[0]
+            
+    if not auth_header or not auth_header.lower().startswith('bearer '):
+        print(f"Missing or invalid auth_header format: {auth_header}")
         return None
-    token = auth_header.split(' ')[1]
+        
+    token = auth_header[7:].strip()
+    if token.startswith('"') and token.endswith('"'):
+        token = token[1:-1]
     
     try:
         cognito = boto3.client('cognito-idp', region_name='us-east-1')
         user = cognito.get_user(AccessToken=token)
-        for attr in user.get('UserAttributes', []):
-            if attr['Name'] == 'sub':
-                return attr['Value']
-        return None
+        return user.get('Username')
     except Exception as e:
         print(f"Token verification failed: {e}")
         return None
@@ -520,6 +528,10 @@ def main(event, context):
     user_id = verify_token(event)
     if not user_id:
         return response(401, {'error': 'Unauthorized: Invalid or missing token'})
+        
+    # Inject verified identity into downstream parameters safely
+    query['user_id'] = user_id
+    body['user_id'] = user_id
 
     # Extract common params
     request_region = query.get('region', 'us-east-1')
