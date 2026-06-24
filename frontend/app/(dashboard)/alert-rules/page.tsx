@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { getToken } from '@/lib/api'
 
 interface AlertRule {
   id: string
@@ -106,7 +107,7 @@ export default function AlertRulesPage() {
   const fetchRules = async () => {
     setLoading(true)
     try {
-      const token = localStorage.getItem('cg_token') || ''
+      const token = await getToken()
       const res = await fetch(`${API_URL}/alert-rules`, {
         headers: { Authorization: `Bearer ${token}` }
       })

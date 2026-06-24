@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getUserId } from '@/lib/api'
+import { getToken } from '@/lib/api'
 
 const steps = [
   {
@@ -41,7 +41,7 @@ export default function ConnectAWSPage() {
 
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
-      const token = localStorage.getItem('cg_token') || ''
+      const token = await getToken()
 
       // ── Actually call the API ──
       const res = await fetch(`${API_URL}/accounts/connect`, {
@@ -54,7 +54,6 @@ export default function ConnectAWSPage() {
         role_arn: roleArn,
         nickname: nickname || 'My AWS Account',
         region,
-        user_id: getUserId(),
       })
       })
 

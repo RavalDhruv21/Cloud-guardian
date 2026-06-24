@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { fetchAuthSession } from 'aws-amplify/auth'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
@@ -7,21 +8,19 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
-// ── Get current user's unique ID from JWT token ───────────
-export const getUserId = (): string => {
+// ── Dynamically fetch fresh token from AWS Amplify ──────────
+export const getToken = async (): Promise<string> => {
   try {
-    const token = localStorage.getItem('cg_token')
-    if (!token) return 'default-user'
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    return payload.sub || 'default-user'
+    const session = await fetchAuthSession()
+    return session.tokens?.accessToken?.toString() || ''
   } catch {
-    return 'default-user'
+    return ''
   }
 }
 
-// Add auth token to every axios request
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('cg_token')
+// Add auth token to every axios request dynamically
+api.interceptors.request.use(async (config) => {
+  const token = await getToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -43,7 +42,7 @@ const isLocalConnected = () => {
 export const getMetrics = async () => {
   if (!isLocalConnected()) return { metrics: [] };
   const region = getRegion()
-  const token = localStorage.getItem('cg_token') || ''
+  const token = await getToken()
   const res = await fetch(
     `${API_URL}/live-metrics?region=${region}`,
     { headers: { Authorization: `Bearer ${token}` } }
@@ -54,7 +53,7 @@ export const getMetrics = async () => {
 export const getMetricsHistory = async (instanceId: string) => {
   if (!isLocalConnected()) return { history: [] };
   const region = getRegion()
-  const token = localStorage.getItem('cg_token') || ''
+  const token = await getToken()
   const res = await fetch(
     `${API_URL}/metrics/history?instance_id=${instanceId}&region=${region}&hours=2`,
     { headers: { Authorization: `Bearer ${token}` } }

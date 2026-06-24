@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getCostSuggestions, dismissSuggestion } from '@/lib/api'
+import { getCostSuggestions, dismissSuggestion, stopResource, getToken } from '@/lib/api'
 
 interface ResolvedItem {
   id: string
@@ -68,7 +68,7 @@ export default function CostOptimizerPage() {
   }
 
   const handleStop = async (item: any) => {
-    const token = localStorage.getItem('cg_token') || ''
+    const token = await getToken()
     try {
       let endpoint = ''
       let body: any = { region: item.region || 'us-east-1' }

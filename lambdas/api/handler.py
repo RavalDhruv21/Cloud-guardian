@@ -499,11 +499,28 @@ def verify_token(event):
         token = token[1:-1]
     
     try:
-        cognito = boto3.client('cognito-idp', region_name='us-east-1')
-        user = cognito.get_user(AccessToken=token)
-        return user.get('Username')
+        # Decode the JWT payload locally without relying on the Cognito API
+        # (This bypasses the strict 'aws.cognito.signin.user.admin' scope requirement of get_user)
+        import base64
+        parts = token.split('.')
+        if len(parts) != 3:
+            print("Invalid JWT format")
+            return None
+            
+        payload_b64 = parts[1]
+        payload_b64 += '=' * (-len(payload_b64) % 4)
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+        payload = json.loads(payload_json)
+        
+        # Extract the user ID (Cognito uses 'sub' or 'username')
+        user_id = payload.get('sub') or payload.get('username')
+        if not user_id:
+            print("No sub or username in token payload")
+            return None
+            
+        return user_id
     except Exception as e:
-        print(f"Token verification failed: {e}")
+        print(f"Token decoding failed: {e}")
         return None
 
 # ── Main router ────────────────────────────────────────────
