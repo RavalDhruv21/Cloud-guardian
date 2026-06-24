@@ -73,8 +73,8 @@ export const getToken = async (): Promise<string> => {
       
       const tokens = await res.json()
       if (tokens.access_token) {
-        token = tokens.access_token
-        localStorage.setItem('cg_token', token)
+        token = tokens.access_token as string
+        localStorage.setItem('cg_token', token || '')
       } else {
         throw new Error('No access token in refresh response')
       }
@@ -88,7 +88,7 @@ export const getToken = async (): Promise<string> => {
     }
   }
 
-  return token
+  return token || ''
 }
 
 // Add auth token to every axios request dynamically
