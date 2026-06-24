@@ -479,6 +479,25 @@ def get_audit_logs(region='us-east-1', user_id='default-user'):
     except Exception as e:
         return response(500, {'error': str(e)})
 
+# ── Auth Verification ──────────────────────────────────────
+def verify_token(event):
+    headers = event.get('headers') or {}
+    auth_header = headers.get('Authorization') or headers.get('authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return None
+    token = auth_header.split(' ')[1]
+    
+    try:
+        cognito = boto3.client('cognito-idp', region_name='us-east-1')
+        user = cognito.get_user(AccessToken=token)
+        for attr in user.get('UserAttributes', []):
+            if attr['Name'] == 'sub':
+                return attr['Value']
+        return None
+    except Exception as e:
+        print(f"Token verification failed: {e}")
+        return None
+
 # ── Main router ────────────────────────────────────────────
 def main(event, context):
     method = event.get('httpMethod', 'GET')
@@ -497,8 +516,12 @@ def main(event, context):
 
     print(f"{method} {path}")
 
+    # Enforce strict authentication
+    user_id = verify_token(event)
+    if not user_id:
+        return response(401, {'error': 'Unauthorized: Invalid or missing token'})
+
     # Extract common params
-    user_id = query.get('user_id', body.get('user_id', 'default-user'))
     request_region = query.get('region', 'us-east-1')
 
     routes = {
