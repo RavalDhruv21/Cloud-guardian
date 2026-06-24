@@ -92,5 +92,19 @@ jobs:
         run: |
           aws cloudfront create-invalidation --distribution-id $(aws cloudfront list-distributions --query "DistributionList.Items[0].Id" --output text) --paths "/*"
 
+# ==========================================
+# MANUAL CLOUDFRONT 404 CONFIGURATION NOTE
+# ==========================================
+# To properly handle 404s for this statically exported Next.js app, 
+# a one-time manual configuration is required in the AWS Console:
+# 1. Go to CloudFront -> Select your Distribution -> "Error pages" tab.
+# 2. Click "Create custom error response".
+# 3. HTTP error code: 403 (Forbidden)  ->  Response page path: /404.html  -> HTTP Response Code: 404
+# 4. HTTP error code: 404 (Not Found)  ->  Response page path: /404.html  -> HTTP Response Code: 404
+#
+# (S3 returns a 403 when a file doesn't exist and ListBucket permissions are denied, 
+#  which is standard practice for secure static site hosting.)
+# ==========================================
+
       - name: Done
         run: echo "All Lambdas and Frontend deployed successfully!"
