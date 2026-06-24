@@ -12,8 +12,17 @@ const api = axios.create({
 export const getToken = async (): Promise<string> => {
   try {
     const session = await fetchAuthSession()
-    return session.tokens?.accessToken?.toString() || ''
+    const token = session.tokens?.accessToken?.toString() || ''
+    if (!token && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
+      localStorage.clear()
+      window.location.href = '/login'
+    }
+    return token
   } catch {
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
+      localStorage.clear()
+      window.location.href = '/login'
+    }
     return ''
   }
 }
