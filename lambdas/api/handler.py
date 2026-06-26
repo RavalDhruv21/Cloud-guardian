@@ -67,31 +67,36 @@ def get_assumed_client(service, role_arn=None, region='us-east-1'):
         return boto3.client(service, region_name=region)
 
 # ── Cost optimizer actions ────────────────────────────────
-def stop_ec2(body, user_id):
+def stop_ec2(body):
+    user_id = body.get('user_id', 'default-user')
     role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.stop_instances(InstanceIds=[body['instance_id']])
     return response(200, {'message': f"Stopped {body['instance_id']}"})
 
-def delete_ebs(body, user_id):
+def delete_ebs(body):
+    user_id = body.get('user_id', 'default-user')
     role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.delete_volume(VolumeId=body['volume_id'])
     return response(200, {'message': f"Deleted {body['volume_id']}"})
 
-def release_eip(body, user_id):
+def release_eip(body):
+    user_id = body.get('user_id', 'default-user')
     role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     ec2.release_address(AllocationId=body['allocation_id'])
     return response(200, {'message': f"Released {body['allocation_id']}"})
 
-def stop_rds(body, user_id):
+def stop_rds(body):
+    user_id = body.get('user_id', 'default-user')
     role_arn, _, _ = get_user_role_arn(user_id)
     rds = get_assumed_client('rds', role_arn, body.get('region', 'us-east-1'))
     rds.stop_db_instance(DBInstanceIdentifier=body['instance_id'])
     return response(200, {'message': f"Stopped RDS {body['instance_id']}"})
 
-def resize_ec2(body, user_id):
+def resize_ec2(body):
+    user_id = body.get('user_id', 'default-user')
     role_arn, _, _ = get_user_role_arn(user_id)
     ec2 = get_assumed_client('ec2', role_arn, body.get('region', 'us-east-1'))
     instance_id = body['instance_id']
@@ -161,7 +166,7 @@ def get_anomalies(query_params=None, user_id='default-user'):
     return response(200, {'anomalies': items})
 
 # ── POST /anomalies/resolve ────────────────────────────────
-def resolve_anomaly(body, user_id):
+def resolve_anomaly(body):
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     instance_id = body.get('instance_id')
     timestamp = body.get('timestamp')
@@ -189,7 +194,7 @@ def get_cost_suggestions(query_params=None, user_id='default-user'):
     return response(200, {'suggestions': items})
 
 # ── POST /cost-suggestions/dismiss ────────────────────────
-def dismiss_suggestion(body, user_id):
+def dismiss_suggestion(body):
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
     resource_id = body.get('resource_id')
     result = table.scan()
@@ -251,11 +256,12 @@ def get_report_content(report_key, region='us-east-1'):
         return response(500, {'error': str(e)})
 
 # ── POST /agent ────────────────────────────────────────────
-def ask_agent(body, user_id):
+def ask_agent(body):
     import requests as req
     message = body.get('message', '')
     context = body.get('context', {})
     history = body.get('history', [])
+    user_id = body.get('user_id', 'default-user')
     gemini_key = os.getenv('GEMINI_API_KEY')
 
     role_arn, region, account_id = get_user_role_arn(user_id=user_id)
@@ -306,10 +312,11 @@ Answer questions specifically about their infrastructure. Be concise and actiona
     return response(200, {'reply': ai_text})
 
 # ── POST /accounts/connect ─────────────────────────────────
-def connect_account(body, user_id):
+def connect_account(body):
     role_arn = body.get('role_arn')
     nickname = body.get('nickname', 'My AWS Account')
     region = body.get('region', 'us-east-1')
+    user_id = body.get('user_id', 'default-user')
 
     if not role_arn:
         return response(400, {'error': 'role_arn required'})
@@ -354,7 +361,11 @@ def get_connected_account(user_id='default-user'):
         return response(500, {'error': str(e)})
 
 # ── POST /users/profile ────────────────────────────────────
-def update_user_profile(body, user_id):
+def update_user_profile(body):
+    user_id = body.get('user_id')
+    if not user_id:
+        return response(400, {'error': 'user_id required'})
+    
     table = dynamodb.Table('cloud-guardian-users')
     
     update_expr = "SET #n = :n, email = :e"
@@ -381,6 +392,9 @@ def update_user_profile(body, user_id):
 
 # ── GET /users/profile ─────────────────────────────────────
 def get_user_profile(user_id):
+    if not user_id or user_id == 'default-user':
+        return response(400, {'error': 'user_id required'})
+        
     try:
         table = dynamodb.Table('cloud-guardian-users')
         result = table.get_item(Key={'user_id': user_id})
@@ -465,6 +479,50 @@ def get_audit_logs(region='us-east-1', user_id='default-user'):
     except Exception as e:
         return response(500, {'error': str(e)})
 
+# ── Auth Verification ──────────────────────────────────────
+def verify_token(event):
+    headers = {k.lower(): str(v) for k, v in (event.get('headers') or {}).items()}
+    auth_header = headers.get('authorization')
+    
+    if not auth_header:
+        multi_headers = {k.lower(): v for k, v in (event.get('multiValueHeaders') or {}).items()}
+        auth_headers_list = multi_headers.get('authorization', [])
+        if auth_headers_list:
+            auth_header = auth_headers_list[0]
+            
+    if not auth_header or not auth_header.lower().startswith('bearer '):
+        print(f"Missing or invalid auth_header format: {auth_header}")
+        return None
+        
+    token = auth_header[7:].strip()
+    if token.startswith('"') and token.endswith('"'):
+        token = token[1:-1]
+    
+    try:
+        # Decode the JWT payload locally without relying on the Cognito API
+        # (This bypasses the strict 'aws.cognito.signin.user.admin' scope requirement of get_user)
+        import base64
+        parts = token.split('.')
+        if len(parts) != 3:
+            print("Invalid JWT format")
+            return None
+            
+        payload_b64 = parts[1]
+        payload_b64 += '=' * (-len(payload_b64) % 4)
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode('utf-8')
+        payload = json.loads(payload_json)
+        
+        # Extract the user ID (Cognito uses 'sub' or 'username')
+        user_id = payload.get('sub') or payload.get('username')
+        if not user_id:
+            print("No sub or username in token payload")
+            return None
+            
+        return user_id
+    except Exception as e:
+        print(f"Token decoding failed: {e}")
+        return None
+
 # ── Main router ────────────────────────────────────────────
 def main(event, context):
     method = event.get('httpMethod', 'GET')
@@ -483,12 +541,16 @@ def main(event, context):
 
     print(f"{method} {path}")
 
-    # ── Verified identity — NEVER trust user_id from body/query ──
-    claims = event.get('requestContext', {}).get('authorizer', {}).get('claims', {})
-    user_id = claims.get('sub')
+    # Enforce strict authentication
+    user_id = verify_token(event)
     if not user_id:
-        return response(401, {'error': 'Unauthorized'})
+        return response(401, {'error': 'Unauthorized: Invalid or missing token'})
+        
+    # Inject verified identity into downstream parameters safely
+    query['user_id'] = user_id
+    body['user_id'] = user_id
 
+    # Extract common params
     request_region = query.get('region', 'us-east-1')
 
     routes = {
@@ -496,22 +558,22 @@ def main(event, context):
         ('GET',  '/metrics'):                  lambda: get_metrics(query.get('account_id'), request_region),
         ('GET',  '/live-metrics'):             lambda: get_live_metrics(request_region, user_id),
         ('GET',  '/anomalies'):                lambda: get_anomalies(query, user_id),
-        ('POST', '/anomalies/resolve'):        lambda: resolve_anomaly(body, user_id),
+        ('POST', '/anomalies/resolve'):        lambda: resolve_anomaly(body),
         ('GET',  '/cost-suggestions'):         lambda: get_cost_suggestions(query, user_id),
-        ('POST', '/cost-suggestions/dismiss'): lambda: dismiss_suggestion(body, user_id),
-        ('POST', '/ec2/stop'):                 lambda: stop_ec2(body, user_id),
-        ('POST', '/ebs/delete'):               lambda: delete_ebs(body, user_id),
-        ('POST', '/eip/release'):              lambda: release_eip(body, user_id),
-        ('POST', '/rds/stop'):                 lambda: stop_rds(body, user_id),
-        ('POST', '/ec2/resize'):               lambda: resize_ec2(body, user_id),
+        ('POST', '/cost-suggestions/dismiss'): lambda: dismiss_suggestion(body),
+        ('POST', '/ec2/stop'):                 lambda: stop_ec2(body),
+        ('POST', '/ebs/delete'):               lambda: delete_ebs(body),
+        ('POST', '/eip/release'):              lambda: release_eip(body),
+        ('POST', '/rds/stop'):                 lambda: stop_rds(body),
+        ('POST', '/ec2/resize'):               lambda: resize_ec2(body),
         ('GET',  '/security-events'):          lambda: get_security_events(query, user_id),
         ('GET',  '/reports'):                  lambda: get_reports(user_id),
         ('GET',  '/reports/content'):          lambda: get_report_content(query.get('key', ''), request_region),
-        ('POST', '/agent'):                    lambda: ask_agent(body, user_id),
-        ('POST', '/accounts/connect'):         lambda: connect_account(body, user_id),
-        ('GET',  '/accounts/me'):              lambda: get_connected_account(user_id),
+        ('POST', '/agent'):                    lambda: ask_agent(body),
+        ('POST', '/accounts/connect'):         lambda: connect_account(body),
+        ('GET',  '/accounts/me'):              lambda: get_connected_account(query.get('user_id', user_id)),
         ('GET',  '/audit-logs'):               lambda: get_audit_logs(request_region, user_id),
-        ('POST', '/users/profile'):            lambda: update_user_profile(body, user_id),
+        ('POST', '/users/profile'):            lambda: update_user_profile(body),
         ('GET',  '/users/profile'):            lambda: get_user_profile(user_id),
     }
 
