@@ -220,6 +220,12 @@ export const getAccounts = async () => {
   return res.data
 }
 
+// ── Security scan (on-demand) ─────────────────────────────
+export const runSecurityScan = async () => {
+  const res = await api.post('/security/scan')
+  return res.data
+}
+
 // ── Compliance score ──────────────────────────────────────
 export const getComplianceScore = async () => {
   if (!isLocalConnected()) return { score: null, violations: [], account_id: null }

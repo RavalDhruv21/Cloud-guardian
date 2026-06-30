@@ -353,6 +353,115 @@ INSTRUCTIONS:
         print(f"ask_agent unexpected error: {e}")
         return response(500, {'error': 'Unexpected error calling Gemini API'})
 
+# ── POST /security/scan ────────────────────────────────────
+_SCAN_WHITELIST = ['cloud-guardian-4626']
+
+def _save_security_event_deduped(resource_id, event_type_label, detail, account_id, user_id, reverted):
+    """Save a security event, suppressing duplicates within 1 hour."""
+    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    existing = table.scan(
+        FilterExpression='instance_id = :r AND #ts > :c AND event_type = :et',
+        ExpressionAttributeNames={'#ts': 'timestamp'},
+        ExpressionAttributeValues={':r': resource_id, ':c': cutoff, ':et': 'security'}
+    )
+    if existing.get('Items'):
+        return False
+    table.put_item(Item={
+        'instance_id': resource_id,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'event_type': 'security',
+        'severity': 'critical',
+        'summary': f'Security event: {event_type_label} on {resource_id}',
+        'likely_cause': detail,
+        'recommended_action': 'Auto-reverted by Cloud Guardian' if reverted else 'Manual review required',
+        'cost_impact': 'No cost impact',
+        'resolved': reverted,
+        'reverted': reverted,
+        'account_id': account_id,
+        'user_id': user_id,
+    })
+    return True
+
+def scan_security_now(user_id='default-user'):
+    role_arn, region, account_id = get_user_role_arn(user_id=user_id)
+    if not account_id:
+        return response(200, {'issues': [], 'account_id': None, 'message': 'No AWS account connected'})
+
+    issues = []
+
+    # ── Check security groups for open SSH ────────────────
+    try:
+        ec2 = get_assumed_client('ec2', role_arn, region)
+        for sg in ec2.describe_security_groups()['SecurityGroups']:
+            for rule in sg.get('IpPermissions', []):
+                if rule.get('FromPort') == 22 and rule.get('ToPort') == 22:
+                    for ip_range in rule.get('IpRanges', []):
+                        if ip_range.get('CidrIp') == '0.0.0.0/0':
+                            reverted = False
+                            try:
+                                ec2.revoke_security_group_ingress(GroupId=sg['GroupId'], IpPermissions=[{
+                                    'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22,
+                                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                                }])
+                                reverted = True
+                            except Exception as e:
+                                print(f"Port 22 revoke failed: {e}")
+                            _save_security_event_deduped(
+                                sg['GroupId'], 'Port 22 opened to 0.0.0.0/0',
+                                f'Port 22 open to 0.0.0.0/0 on {sg["GroupId"]}',
+                                account_id, user_id, reverted
+                            )
+                            issues.append({'type': 'OPEN_SSH', 'resource': sg['GroupId'], 'reverted': reverted})
+    except Exception as e:
+        print(f"SG scan error: {e}")
+
+    # ── Check S3 buckets for missing public access block ──
+    try:
+        s3 = get_assumed_client('s3', role_arn, region)
+        for bucket in s3.list_buckets().get('Buckets', []):
+            name = bucket['Name']
+            if name in _SCAN_WHITELIST:
+                continue
+            is_public = False
+            try:
+                cfg = s3.get_public_access_block(Bucket=name)['PublicAccessBlockConfiguration']
+                if not all([cfg.get('BlockPublicAcls'), cfg.get('IgnorePublicAcls'),
+                            cfg.get('BlockPublicPolicy'), cfg.get('RestrictPublicBuckets')]):
+                    is_public = True
+            except BotocoreClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchPublicAccessBlockConfiguration':
+                    is_public = True
+            except Exception:
+                pass
+
+            if is_public:
+                reverted = False
+                try:
+                    s3.put_public_access_block(Bucket=name, PublicAccessBlockConfiguration={
+                        'BlockPublicAcls': True, 'IgnorePublicAcls': True,
+                        'BlockPublicPolicy': True, 'RestrictPublicBuckets': True
+                    })
+                    reverted = True
+                except Exception as e:
+                    print(f"S3 block failed for {name}: {e}")
+                _save_security_event_deduped(
+                    name, 'S3 bucket made public',
+                    f'Bucket {name} public access block missing or disabled',
+                    account_id, user_id, reverted
+                )
+                issues.append({'type': 'PUBLIC_S3', 'resource': name, 'reverted': reverted})
+    except Exception as e:
+        print(f"S3 scan error: {e}")
+
+    return response(200, {
+        'issues': issues,
+        'issues_found': len(issues),
+        'account_id': account_id,
+        'scanned_at': datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ── GET /compliance-score ──────────────────────────────────
 _COMPLIANCE_WHITELISTED_BUCKETS = ['cloud-guardian-4626']
 
@@ -776,6 +885,7 @@ def main(event, context):
         ('GET',  '/reports'):                  lambda: get_reports(user_id),
         ('GET',  '/reports/content'):          lambda: get_report_content(query.get('key', ''), request_region),
         ('POST', '/agent'):                    lambda: ask_agent(body),
+        ('POST', '/security/scan'):            lambda: scan_security_now(user_id),
         ('GET',  '/compliance-score'):         lambda: get_compliance_score(user_id),
         ('GET',  '/cost-forecast'):            lambda: get_cost_forecast(user_id),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),

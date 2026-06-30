@@ -1,12 +1,14 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { getSecurityEvents } from '@/lib/api'
+import { getSecurityEvents, runSecurityScan } from '@/lib/api'
 
 export default function SecurityPage() {
   const router = useRouter()
   const [events, setEvents] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [scanning, setScanning] = useState(false)
+  const [scanResult, setScanResult] = useState<any>(null)
   const [tab, setTab] = useState<'all' | 'auto-fixed' | 'review'>('all')
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
@@ -25,10 +27,26 @@ export default function SecurityPage() {
     }
 
     fetchEvents(true)
-    // Poll every 5 seconds so new events appear within 5s of detection
     interval = setInterval(() => fetchEvents(false), 5000)
     return () => clearInterval(interval)
   }, [])
+
+  const handleScanNow = async () => {
+    setScanning(true)
+    setScanResult(null)
+    try {
+      const result = await runSecurityScan()
+      setScanResult(result)
+      // Refresh events immediately after scan
+      const data = await getSecurityEvents()
+      setEvents(data.events || [])
+    } catch (err) {
+      console.error('Security scan failed:', err)
+      setScanResult({ error: 'Scan failed — check console' })
+    } finally {
+      setScanning(false)
+    }
+  }
 
   const filtered = events.filter(e => {
     if (tab === 'auto-fixed') return e.reverted || e.resolved
@@ -59,11 +77,37 @@ export default function SecurityPage() {
             {autoFixed} auto-reverted · {needsReview} need review
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-full uppercase tracking-wider shadow-[0_0_15px_rgba(16,185,129,0.15)]" style={{background: 'rgba(16,185,129,0.15)', color: '#34D399', border: '1px solid rgba(16,185,129,0.2)'}}>
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-          Auto-remediation active
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleScanNow}
+            disabled={scanning}
+            className="text-xs font-bold px-4 py-2 rounded-lg transition-all disabled:opacity-50"
+            style={{background: 'rgba(255,255,255,0.06)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)'}}
+            onMouseEnter={e => { if (!scanning) e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
+          >
+            {scanning ? '⏳ Scanning…' : '⚡ Scan now'}
+          </button>
+          <div className="flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-full uppercase tracking-wider shadow-[0_0_15px_rgba(16,185,129,0.15)]" style={{background: 'rgba(16,185,129,0.15)', color: '#34D399', border: '1px solid rgba(16,185,129,0.2)'}}>
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+            Auto-remediation active
+          </div>
         </div>
       </div>
+
+      {scanResult && !scanResult.error && (
+        <div className="mb-5 px-4 py-3 rounded-xl text-xs font-medium flex items-center gap-3"
+          style={{background: scanResult.issues_found > 0 ? 'rgba(251,191,36,0.08)' : 'rgba(52,211,153,0.08)', border: `1px solid ${scanResult.issues_found > 0 ? 'rgba(251,191,36,0.2)' : 'rgba(52,211,153,0.2)'}`, color: scanResult.issues_found > 0 ? '#FBBF24' : '#34D399'}}>
+          {scanResult.issues_found > 0
+            ? `⚡ Scan complete — ${scanResult.issues_found} issue(s) found. ${scanResult.issues?.filter((i: any) => i.reverted).length} auto-remediated.`
+            : '✓ Scan complete — no security issues found'}
+        </div>
+      )}
+      {scanResult?.error && (
+        <div className="mb-5 px-4 py-3 rounded-xl text-xs font-medium" style={{background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', color: '#F87171'}}>
+          ✗ {scanResult.error}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-5 mb-8">
         {[
