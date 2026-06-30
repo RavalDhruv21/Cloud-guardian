@@ -220,6 +220,20 @@ export const getAccounts = async () => {
   return res.data
 }
 
+// ── Compliance score ──────────────────────────────────────
+export const getComplianceScore = async () => {
+  if (!isLocalConnected()) return { score: null, violations: [], account_id: null }
+  const res = await api.get('/compliance-score')
+  return res.data
+}
+
+// ── Cost forecast ─────────────────────────────────────────
+export const getCostForecast = async () => {
+  if (!isLocalConnected()) return { forecast: null, account_id: null }
+  const res = await api.get('/cost-forecast')
+  return res.data
+}
+
 // ── User Profile ──────────────────────────────────────────
 export const getUserProfile = async () => {
   const res = await api.get('/users/profile')

@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getMetrics, getAnomalies, getCostSuggestions, getSecurityEvents } from '@/lib/api'
+import { getMetrics, getAnomalies, getCostSuggestions, getSecurityEvents, getComplianceScore, getCostForecast } from '@/lib/api'
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -9,23 +9,29 @@ export default function DashboardPage() {
   const [anomalies, setAnomalies] = useState<any[]>([])
   const [costs, setCosts] = useState<any[]>([])
   const [security, setSecurity] = useState<any[]>([])
+  const [compliance, setCompliance] = useState<any>(null)
+  const [forecast, setForecast] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [awsConnected, setAwsConnected] = useState(false)
-  
+
   useEffect(() => {
     setAwsConnected(localStorage.getItem('aws_connected') === 'true')
     const fetchAll = async () => {
       try {
-        const [m, a, c, s] = await Promise.all([
+        const [m, a, c, s, comp, fc] = await Promise.all([
           getMetrics(),
           getAnomalies(),
           getCostSuggestions(),
-          getSecurityEvents()
+          getSecurityEvents(),
+          getComplianceScore(),
+          getCostForecast(),
         ])
         setMetrics(m.metrics || [])
         setAnomalies(a.anomalies || [])
         setCosts(c.suggestions || [])
         setSecurity(s.events || [])
+        setCompliance(comp)
+        setForecast(fc)
       } catch (err) {
         console.error('Failed to fetch data:', err)
       } finally {
@@ -33,7 +39,6 @@ export default function DashboardPage() {
       }
     }
     fetchAll()
-    // Refresh every 60 seconds
     const interval = setInterval(fetchAll, 60000)
     return () => clearInterval(interval)
   }, [])
@@ -109,7 +114,7 @@ export default function DashboardPage() {
               <button onClick={() => router.push('/metrics')} className="text-xs font-medium hover:text-emerald-400 transition-colors" style={{color: 'rgba(255,255,255,0.5)'}}>View all →</button>
             </div>
             <div className="grid grid-cols-2 gap-5 mb-8">
-              {instances.map((instanceId, i) => {
+              {instances.map((instanceId) => {
                 const instanceMetrics = freshMetrics.filter((m: any) => m.instance_id === instanceId) 
                 const latest = instanceMetrics[0]
                 const cpu = parseFloat(latest?.cpu_avg || 0)
@@ -179,8 +184,136 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Bottom row */}
-      <div className="grid grid-cols-2 gap-5 animate-entrance" style={{animationDelay: '0.4s'}}>
+      {/* ── Compliance Score + Cost Forecast ── */}
+      <div className="grid grid-cols-2 gap-5 mb-5 animate-entrance" style={{animationDelay: '0.4s'}}>
+
+        {/* Compliance Score */}
+        <div className="auth-glass p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-white">Security compliance</h3>
+            <button
+              onClick={() => router.push('/compliance')}
+              className="text-xs font-medium hover:text-emerald-400 transition-colors"
+              style={{color: 'rgba(255,255,255,0.5)'}}
+            >
+              Full report →
+            </button>
+          </div>
+          {compliance?.score != null ? (() => {
+            const score = compliance.score as number
+            const grade = compliance.grade as string
+            const scoreColor = score >= 90 ? '#34D399' : score >= 75 ? '#FBBF24' : score >= 60 ? '#F97316' : '#F87171'
+            const scoreGlow = score >= 90 ? 'rgba(52,211,153,0.2)' : score >= 75 ? 'rgba(251,191,36,0.2)' : score >= 60 ? 'rgba(249,115,22,0.2)' : 'rgba(248,113,113,0.2)'
+            return (
+              <div>
+                <div className="flex items-end gap-4 mb-4">
+                  <div>
+                    <div className="text-5xl font-black leading-none" style={{color: scoreColor, textShadow: `0 0 30px ${scoreGlow}`}}>
+                      {score}
+                    </div>
+                    <div className="text-xs mt-1" style={{color: 'rgba(255,255,255,0.4)'}}>out of 100</div>
+                  </div>
+                  <div className="mb-1">
+                    <span className="text-2xl font-black px-3 py-1 rounded-lg" style={{background: scoreGlow, color: scoreColor}}>
+                      {grade}
+                    </span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="h-2 rounded-full overflow-hidden mb-1" style={{background: 'rgba(255,255,255,0.05)'}}>
+                      <div className="h-full rounded-full transition-all duration-1000" style={{width: `${score}%`, background: scoreColor, boxShadow: `0 0 8px ${scoreColor}`}} />
+                    </div>
+                    <div className="text-xs" style={{color: 'rgba(255,255,255,0.4)'}}>
+                      {compliance.violations?.length === 0 ? '✓ All checks passed' : `${compliance.violations.length} issue(s) found`}
+                    </div>
+                  </div>
+                </div>
+                {compliance.violations?.length > 0 && (
+                  <div className="space-y-2">
+                    {compliance.violations.slice(0, 2).map((v: any, idx: number) => (
+                      <div key={idx} className="flex items-start gap-2 px-3 py-2 rounded-lg" style={{background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.12)'}}>
+                        <span className="text-xs mt-0.5" style={{color: '#F87171'}}>●</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-medium truncate" style={{color: 'rgba(255,255,255,0.8)'}}>{v.detail}</div>
+                          <div className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.4)'}}>−{v.points_lost} pts · {v.fix}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })() : (
+            <div className="text-center py-6">
+              <div className="text-2xl mb-2 opacity-40">🛡</div>
+              <div className="text-sm text-white/60">Running compliance scan…</div>
+            </div>
+          )}
+        </div>
+
+        {/* Cost Forecast */}
+        <div className="auth-glass p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-white">Cost forecast</h3>
+            <button
+              onClick={() => router.push('/cost-optimizer')}
+              className="text-xs font-medium hover:text-emerald-400 transition-colors"
+              style={{color: 'rgba(255,255,255,0.5)'}}
+            >
+              Optimizer →
+            </button>
+          </div>
+          {forecast && !forecast.error && forecast.projected_month_total != null ? (() => {
+            const proj = forecast.projected_month_total as number
+            const last = forecast.last_month_cost as number
+            const soFar = forecast.this_month_so_far as number
+            const delta = forecast.delta_pct as number
+            const isUp = delta > 0
+            const deltaColor = delta > 20 ? '#F87171' : delta > 0 ? '#FBBF24' : '#34D399'
+            const deltaGlow = delta > 20 ? 'rgba(248,113,113,0.15)' : delta > 0 ? 'rgba(251,191,36,0.15)' : 'rgba(52,211,153,0.15)'
+            return (
+              <div>
+                {forecast.alert && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg mb-3 text-xs font-medium" style={{background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.2)', color: '#FCA5A5'}}>
+                    ⚠ On track to overspend vs last month
+                  </div>
+                )}
+                <div className="flex items-end gap-3 mb-4">
+                  <div>
+                    <div className="text-3xl font-black" style={{color: '#fff'}}>${proj.toFixed(0)}</div>
+                    <div className="text-xs mt-0.5" style={{color: 'rgba(255,255,255,0.4)'}}>projected this month</div>
+                  </div>
+                  <div className="mb-1 text-sm font-bold px-2 py-1 rounded-lg" style={{background: deltaGlow, color: deltaColor}}>
+                    {isUp ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {[
+                    { label: 'Spent so far this month', value: `$${soFar.toFixed(2)}` },
+                    { label: 'Last month total', value: `$${last.toFixed(2)}` },
+                    { label: 'Daily burn rate', value: `$${(forecast.daily_rate as number).toFixed(2)}/day` },
+                    { label: `Day ${forecast.days_elapsed} of ${forecast.days_in_month}`, value: `${Math.round((forecast.days_elapsed / forecast.days_in_month) * 100)}% through month` },
+                  ].map((row, idx) => (
+                    <div key={idx} className="flex justify-between text-xs">
+                      <span style={{color: 'rgba(255,255,255,0.4)'}}>{row.label}</span>
+                      <span className="font-medium text-white">{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })() : (
+            <div className="text-center py-6">
+              <div className="text-2xl mb-2 opacity-40">📈</div>
+              <div className="text-sm" style={{color: 'rgba(255,255,255,0.5)'}}>
+                {forecast?.error ? 'Cost Explorer not available for this account' : 'Loading forecast…'}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom row — anomalies + cost suggestions */}
+      <div className="grid grid-cols-2 gap-5 animate-entrance" style={{animationDelay: '0.5s'}}>
         {/* Recent anomalies */}
         <div className="auth-glass p-5">
           <div className="flex items-center justify-between mb-5">
@@ -189,8 +322,8 @@ export default function DashboardPage() {
           </div>
           {anomalies.slice(0, 4).length > 0 ? (
             <div className="space-y-1">
-              {anomalies.slice(0, 4).map((item: any, i: number) => (
-                <div key={i} className="flex items-start gap-3 p-3 rounded-xl transition-colors hover:bg-white/5 cursor-pointer">
+              {anomalies.slice(0, 4).map((item: any, idx: number) => (
+                <div key={idx} className="flex items-start gap-3 p-3 rounded-xl transition-colors hover:bg-white/5 cursor-pointer">
                   <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0"
                     style={{
                       background: item.severity === 'critical' ? '#F87171' : item.severity === 'high' ? '#FBBF24' : '#60A5FA',
@@ -200,7 +333,7 @@ export default function DashboardPage() {
                     <div className="text-sm font-medium text-white truncate mb-0.5">{item.summary}</div>
                     <div className="text-xs truncate" style={{color: 'rgba(255,255,255,0.4)'}}>{item.instance_id}</div>
                   </div>
-                  <div className="text-xs font-medium px-2 py-1 rounded flex-shrink-0 uppercase tracking-wider" 
+                  <div className="text-xs font-medium px-2 py-1 rounded flex-shrink-0 uppercase tracking-wider"
                     style={{
                       background: item.severity === 'critical' ? 'rgba(248,113,113,0.1)' : 'rgba(255,255,255,0.05)',
                       color: item.severity === 'critical' ? '#FCA5A5' : 'rgba(255,255,255,0.5)'
@@ -231,8 +364,8 @@ export default function DashboardPage() {
           </div>
           {costs.slice(0, 3).length > 0 ? (
             <div className="space-y-1">
-              {costs.slice(0, 3).map((item: any, i: number) => (
-                <div key={i} className="flex items-center gap-3 p-3 rounded-xl transition-colors hover:bg-white/5 cursor-pointer">
+              {costs.slice(0, 3).map((item: any, idx: number) => (
+                <div key={idx} className="flex items-center gap-3 p-3 rounded-xl transition-colors hover:bg-white/5 cursor-pointer">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{background: 'rgba(255,255,255,0.05)'}}>
                     <span className="text-sm">💰</span>
                   </div>

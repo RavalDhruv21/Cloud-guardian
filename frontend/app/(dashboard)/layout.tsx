@@ -19,6 +19,7 @@ const navItems = [
     items: [
       { label: 'Anomalies', href: '/anomalies', icon: '⚠', badge: null },
       { label: 'Security', href: '/security', icon: '🛡' },
+      { label: 'Compliance', href: '/compliance', icon: '✅' },
       { label: 'Cost optimizer', href: '/cost-optimizer', icon: '💰' },
     ]
   },

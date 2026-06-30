@@ -2,9 +2,10 @@ import json
 import boto3
 import os
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
 from dotenv import load_dotenv
+from botocore.exceptions import ClientError as BotocoreClientError
 
 load_dotenv()
 
@@ -279,22 +280,36 @@ def ask_agent(body):
 
     metrics_table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
     anomalies_table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    cost_table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
 
     recent_metrics = metrics_table.scan(Limit=10).get('Items', [])
-    recent_anomalies = anomalies_table.scan(Limit=5).get('Items', [])
+    recent_anomalies = anomalies_table.scan(Limit=10).get('Items', [])
+    cost_suggestions = cost_table.scan(Limit=10).get('Items', [])
 
     if account_id:
         recent_metrics = [m for m in recent_metrics if m.get('account_id') == account_id]
         recent_anomalies = [a for a in recent_anomalies if a.get('account_id') == account_id]
+        cost_suggestions = [c for c in cost_suggestions if c.get('account_id') == account_id]
 
     unresolved = [a for a in recent_anomalies if not a.get('resolved', False)]
+    open_costs = [c for c in cost_suggestions if c.get('status') != 'dismissed']
+    total_savings = sum(float(c.get('saving_per_month', 0)) for c in open_costs)
 
-    system_prompt = f"""You are Cloud Guardian AI — an expert AWS infrastructure assistant.
-Current account state (Account: {account_id or 'unknown'}, Region: {region}):
-- Recent metrics: {json.dumps(recent_metrics, cls=DecimalEncoder)[:500]}
-- Unresolved anomalies: {json.dumps(unresolved, cls=DecimalEncoder)[:500]}
-- Additional context: {json.dumps(context)[:2000]}
-Answer questions specifically about their infrastructure. Be concise and actionable."""
+    system_prompt = f"""You are Cloud Guardian AI — an expert AWS infrastructure assistant for Cloud Guardian.
+You have real-time data for Account {account_id or 'unknown'} in {region}.
+
+LIVE INFRASTRUCTURE DATA:
+- EC2 metrics (latest): {json.dumps(recent_metrics[:5], cls=DecimalEncoder)[:600]}
+- Unresolved anomalies ({len(unresolved)} total): {json.dumps(unresolved[:5], cls=DecimalEncoder)[:500]}
+- Cost opportunities ({len(open_costs)} found, ${round(total_savings,2)}/mo potential savings): {json.dumps(open_costs[:5], cls=DecimalEncoder)[:400]}
+- Extra context from user: {json.dumps(context)[:1000]}
+
+INSTRUCTIONS:
+- Answer questions specifically about THIS account's infrastructure shown above
+- Be direct and actionable — give specific resource IDs when relevant
+- For cost questions, reference the actual saving amounts above
+- For security questions, reference the actual anomalies and events above
+- Format responses clearly with bullet points where helpful"""
 
     contents = []
     for msg in history:
@@ -337,6 +352,167 @@ Answer questions specifically about their infrastructure. Be concise and actiona
     except Exception as e:
         print(f"ask_agent unexpected error: {e}")
         return response(500, {'error': 'Unexpected error calling Gemini API'})
+
+# ── GET /compliance-score ──────────────────────────────────
+_COMPLIANCE_WHITELISTED_BUCKETS = ['cloud-guardian-4626']
+
+def get_compliance_score(user_id='default-user'):
+    role_arn, region, account_id = get_user_role_arn(user_id=user_id)
+    if not account_id:
+        return response(200, {'score': None, 'violations': [], 'account_id': None})
+
+    score = 100
+    violations = []
+
+    # ── Check 1: SSH (port 22) open to the world ──────────
+    try:
+        ec2 = get_assumed_client('ec2', role_arn, region)
+        sgs = ec2.describe_security_groups()
+        open_ssh = []
+        for sg in sgs['SecurityGroups']:
+            for rule in sg.get('IpPermissions', []):
+                if rule.get('FromPort') == 22 and rule.get('ToPort') == 22:
+                    for ip_range in rule.get('IpRanges', []):
+                        if ip_range.get('CidrIp') == '0.0.0.0/0':
+                            open_ssh.append(sg['GroupId'])
+        if open_ssh:
+            pts = min(len(open_ssh) * 20, 40)
+            score -= pts
+            violations.append({
+                'type': 'OPEN_SSH', 'severity': 'critical',
+                'resources': open_ssh,
+                'detail': f'{len(open_ssh)} security group(s) have SSH open to 0.0.0.0/0',
+                'fix': 'Restrict port 22 to your IP or a VPN CIDR',
+                'points_lost': pts,
+            })
+    except Exception as e:
+        print(f"SG compliance check error: {e}")
+
+    # ── Check 2: S3 buckets without public access block ───
+    try:
+        s3 = get_assumed_client('s3', role_arn, region)
+        all_buckets = s3.list_buckets().get('Buckets', [])
+        public_buckets = []
+        for b in all_buckets:
+            name = b['Name']
+            if name in _COMPLIANCE_WHITELISTED_BUCKETS:
+                continue
+            try:
+                cfg = s3.get_public_access_block(Bucket=name)['PublicAccessBlockConfiguration']
+                if not all([cfg.get('BlockPublicAcls'), cfg.get('IgnorePublicAcls'),
+                            cfg.get('BlockPublicPolicy'), cfg.get('RestrictPublicBuckets')]):
+                    public_buckets.append(name)
+            except BotocoreClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchPublicAccessBlockConfiguration':
+                    public_buckets.append(name)
+            except Exception:
+                pass
+        if public_buckets:
+            pts = min(len(public_buckets) * 15, 30)
+            score -= pts
+            violations.append({
+                'type': 'PUBLIC_S3', 'severity': 'high',
+                'resources': public_buckets,
+                'detail': f'{len(public_buckets)} S3 bucket(s) lack full public access block',
+                'fix': 'Enable Block All Public Access on each bucket',
+                'points_lost': pts,
+            })
+    except Exception as e:
+        print(f"S3 compliance check error: {e}")
+
+    # ── Check 3: Unresolved critical anomalies ────────────
+    try:
+        anomalies_tbl = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+        all_items = anomalies_tbl.scan().get('Items', [])
+        critical = [i for i in all_items
+                    if i.get('account_id') == account_id
+                    and i.get('severity') == 'critical'
+                    and not i.get('resolved', False)]
+        if critical:
+            pts = min(len(critical) * 10, 25)
+            score -= pts
+            violations.append({
+                'type': 'CRITICAL_ANOMALIES', 'severity': 'critical',
+                'resources': [i.get('instance_id', '') for i in critical[:5]],
+                'detail': f'{len(critical)} unresolved critical anomaly/anomalies',
+                'fix': 'Investigate and resolve critical anomalies in the Anomalies page',
+                'points_lost': pts,
+            })
+    except Exception as e:
+        print(f"Anomaly compliance check error: {e}")
+
+    score = max(0, score)
+    grade = 'A' if score >= 90 else 'B' if score >= 75 else 'C' if score >= 60 else 'D' if score >= 40 else 'F'
+    return response(200, {
+        'score': score, 'grade': grade, 'violations': violations,
+        'passing': score >= 80, 'account_id': account_id,
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+    })
+
+
+# ── GET /cost-forecast ─────────────────────────────────────
+def get_cost_forecast(user_id='default-user'):
+    role_arn, region, account_id = get_user_role_arn(user_id=user_id)
+    if not account_id:
+        return response(200, {'forecast': None, 'account_id': None})
+
+    try:
+        today = datetime.now(timezone.utc).date()
+        first_of_month = today.replace(day=1)
+
+        if today.month == 12:
+            next_month_first = date(today.year + 1, 1, 1)
+        else:
+            next_month_first = date(today.year, today.month + 1, 1)
+        days_in_month = (next_month_first - first_of_month).days
+
+        if first_of_month.month == 1:
+            first_of_last_month = date(first_of_month.year - 1, 12, 1)
+        else:
+            first_of_last_month = date(first_of_month.year, first_of_month.month - 1, 1)
+
+        ce = get_assumed_client('ce', role_arn, 'us-east-1')
+
+        last_resp = ce.get_cost_and_usage(
+            TimePeriod={'Start': first_of_last_month.isoformat(), 'End': first_of_month.isoformat()},
+            Granularity='MONTHLY', Metrics=['UnblendedCost']
+        )
+        last_month_cost = float(last_resp['ResultsByTime'][0]['Total']['UnblendedCost']['Amount']) if last_resp['ResultsByTime'] else 0.0
+
+        days_elapsed = max((today - first_of_month).days, 1)
+        this_month_cost = 0.0
+        if today > first_of_month:
+            this_resp = ce.get_cost_and_usage(
+                TimePeriod={'Start': first_of_month.isoformat(), 'End': today.isoformat()},
+                Granularity='MONTHLY', Metrics=['UnblendedCost']
+            )
+            if this_resp['ResultsByTime']:
+                this_month_cost = float(this_resp['ResultsByTime'][0]['Total']['UnblendedCost']['Amount'])
+
+        daily_rate = this_month_cost / days_elapsed
+        projected = daily_rate * days_in_month
+        delta_pct = ((projected - last_month_cost) / last_month_cost * 100) if last_month_cost > 0.01 else 0.0
+
+        return response(200, {
+            'last_month_cost': round(last_month_cost, 2),
+            'this_month_so_far': round(this_month_cost, 2),
+            'projected_month_total': round(projected, 2),
+            'daily_rate': round(daily_rate, 4),
+            'delta_pct': round(delta_pct, 1),
+            'days_elapsed': days_elapsed,
+            'days_in_month': days_in_month,
+            'alert': delta_pct > 20,
+            'account_id': account_id,
+        })
+    except BotocoreClientError as e:
+        code = e.response['Error']['Code']
+        if code in ('AccessDeniedException', 'OptInRequired'):
+            return response(200, {'error': 'Cost Explorer not enabled or accessible for this account', 'account_id': account_id})
+        return response(500, {'error': str(e)})
+    except Exception as e:
+        print(f"Cost forecast error: {e}")
+        return response(500, {'error': str(e)})
+
 
 # ── POST /accounts/connect ─────────────────────────────────
 def connect_account(body):
@@ -600,6 +776,8 @@ def main(event, context):
         ('GET',  '/reports'):                  lambda: get_reports(user_id),
         ('GET',  '/reports/content'):          lambda: get_report_content(query.get('key', ''), request_region),
         ('POST', '/agent'):                    lambda: ask_agent(body),
+        ('GET',  '/compliance-score'):         lambda: get_compliance_score(user_id),
+        ('GET',  '/cost-forecast'):            lambda: get_cost_forecast(user_id),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),
         ('GET',  '/accounts/me'):              lambda: get_connected_account(query.get('user_id', user_id)),
         ('GET',  '/audit-logs'):               lambda: get_audit_logs(request_region, user_id),
