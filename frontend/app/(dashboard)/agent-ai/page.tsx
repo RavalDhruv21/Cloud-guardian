@@ -141,10 +141,11 @@ export default function AgentAIPage() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }])
 
-    } catch (error) {
+    } catch (error: any) {
+      const errMsg = error?.response?.data?.error || 'Sorry — I had trouble connecting. Please try again.'
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: 'Sorry — I had trouble connecting. Please check your API key and try again.',
+        content: errMsg,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }])
     }

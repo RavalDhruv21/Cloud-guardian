@@ -271,6 +271,10 @@ def ask_agent(body):
     user_id = body.get('user_id', 'default-user')
     gemini_key = os.getenv('GEMINI_API_KEY')
 
+    if not gemini_key:
+        print("GEMINI_API_KEY environment variable is not set on this Lambda")
+        return response(500, {'error': 'Agent AI is not configured — GEMINI_API_KEY missing on Lambda'})
+
     role_arn, region, account_id = get_user_role_arn(user_id=user_id)
 
     metrics_table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
@@ -292,31 +296,47 @@ Current account state (Account: {account_id or 'unknown'}, Region: {region}):
 - Additional context: {json.dumps(context)[:2000]}
 Answer questions specifically about their infrastructure. Be concise and actionable."""
 
-    # Format history for Gemini
     contents = []
     for msg in history:
         role = 'model' if msg.get('role') == 'assistant' else 'user'
         contents.append({'role': role, 'parts': [{'text': msg.get('content', '')}]})
-    
-    # Append the current message
     contents.append({'role': 'user', 'parts': [{'text': message}]})
 
-    gemini_response = req.post(
-        f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}',
-        headers={'Content-Type': 'application/json'},
-        json={
-            'systemInstruction': {
-                'parts': [{'text': system_prompt}]
+    try:
+        gemini_response = req.post(
+            f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}',
+            headers={'Content-Type': 'application/json'},
+            json={
+                'systemInstruction': {'parts': [{'text': system_prompt}]},
+                'contents': contents,
+                'generationConfig': {'temperature': 0.3, 'maxOutputTokens': 2000}
             },
-            'contents': contents,
-            'generationConfig': {
-                'temperature': 0.3,
-                'maxOutputTokens': 2000
-            }
-        }
-    )
-    ai_text = gemini_response.json().get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'Error generating response')
-    return response(200, {'reply': ai_text})
+            timeout=25
+        )
+        gemini_response.raise_for_status()
+        data = gemini_response.json()
+        ai_text = (
+            data.get('candidates', [{}])[0]
+                .get('content', {})
+                .get('parts', [{}])[0]
+                .get('text', '')
+            or 'No response generated.'
+        )
+        return response(200, {'reply': ai_text})
+    except req.exceptions.HTTPError as e:
+        error_body = {}
+        try:
+            error_body = gemini_response.json()
+        except Exception:
+            pass
+        print(f"Gemini API HTTP error {gemini_response.status_code}: {error_body}")
+        return response(502, {'error': f'Gemini API error: {error_body.get("error", {}).get("message", str(e))}'})
+    except req.exceptions.Timeout:
+        print("Gemini API request timed out")
+        return response(504, {'error': 'Gemini API timed out — try again'})
+    except Exception as e:
+        print(f"ask_agent unexpected error: {e}")
+        return response(500, {'error': 'Unexpected error calling Gemini API'})
 
 # ── POST /accounts/connect ─────────────────────────────────
 def connect_account(body):

@@ -88,7 +88,7 @@ export default function DashboardLayout({
     }
   }, [])
 
-  // Fetch unresolved anomalies count
+  // Fetch unresolved anomalies count — re-runs on auth, region change, or account switch
   useEffect(() => {
     if (!authChecked) return
     const fetchCount = async () => {
@@ -101,6 +101,12 @@ export default function DashboardLayout({
       }
     }
     fetchCount()
+    window.addEventListener('region-changed', fetchCount)
+    window.addEventListener('profile-updated', fetchCount)
+    return () => {
+      window.removeEventListener('region-changed', fetchCount)
+      window.removeEventListener('profile-updated', fetchCount)
+    }
   }, [authChecked])
 
   // Load region

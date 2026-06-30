@@ -142,9 +142,35 @@ def send_sns_alert(diagnosis, metric, account_id=None):
     sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=subject, Message=message)
 
 
+ANOMALY_SUPPRESSION_HOURS = 6  # same anomaly won't be re-saved within this window
+
+def _is_recent_anomaly(table, instance_id, summary, window_hours):
+    """Returns True if an identical unresolved anomaly exists within window_hours."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+    result = table.scan(
+        FilterExpression=(
+            'instance_id = :iid AND #ts > :cutoff AND summary = :summary AND resolved = :r'
+        ),
+        ExpressionAttributeNames={'#ts': 'timestamp'},
+        ExpressionAttributeValues={
+            ':iid': instance_id,
+            ':cutoff': cutoff,
+            ':summary': summary,
+            ':r': False,
+        }
+    )
+    return len(result.get('Items', [])) > 0
+
 def save_anomaly(instance_id, metrics, diagnosis, account_id=None, user_id=None):
+    """Saves anomaly only if no identical unresolved anomaly exists within the suppression window.
+    Returns True if saved, False if suppressed."""
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+
+    if _is_recent_anomaly(table, instance_id, diagnosis['summary'], ANOMALY_SUPPRESSION_HOURS):
+        print(f"  Suppressed duplicate anomaly for {instance_id} (within {ANOMALY_SUPPRESSION_HOURS}h window)")
+        return False
+
     item = {
         'instance_id': instance_id,
         'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -161,6 +187,7 @@ def save_anomaly(instance_id, metrics, diagnosis, account_id=None, user_id=None)
     if user_id:
         item['user_id'] = user_id
     table.put_item(Item=item)
+    return True
 
 
 def get_live_metrics(role_arn, region, account_id):
@@ -277,9 +304,10 @@ def main(event=None, context=None):
                 print(f"  [{source}] anomaly_detected={diagnosis['anomaly_detected']}, "
                       f"severity={diagnosis.get('severity')}")
                 if diagnosis['anomaly_detected']:
-                    save_anomaly(metric['instance_id'], metric, diagnosis,
-                                 account_id=account_id, user_id=user_id)
-                    send_sns_alert(diagnosis, metric, account_id=account_id)
+                    saved = save_anomaly(metric['instance_id'], metric, diagnosis,
+                                         account_id=account_id, user_id=user_id)
+                    if saved:
+                        send_sns_alert(diagnosis, metric, account_id=account_id)
                 results.append({'instance_id': metric['instance_id'], 'diagnosis': diagnosis, 'source': source})
             except Exception as e:
                 print(f"Error analyzing {metric['instance_id']}: {e}")
@@ -313,9 +341,10 @@ def main(event=None, context=None):
                         print(f"    [{source}] anomaly_detected={diagnosis['anomaly_detected']}, "
                               f"severity={diagnosis.get('severity')}")
                         if diagnosis['anomaly_detected']:
-                            save_anomaly(metric['instance_id'], metric, diagnosis,
-                                         account_id=account_id, user_id=user_id)
-                            send_sns_alert(diagnosis, metric, account_id=account_id)
+                            saved = save_anomaly(metric['instance_id'], metric, diagnosis,
+                                                 account_id=account_id, user_id=user_id)
+                            if saved:
+                                send_sns_alert(diagnosis, metric, account_id=account_id)
                         results.append({
                             'instance_id': metric['instance_id'],
                             'diagnosis': diagnosis,
