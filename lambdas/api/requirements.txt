@@ -1,3 +1,4 @@
 
 python-dotenv
-python-jose[cryptography]
+requests
+python-jose
