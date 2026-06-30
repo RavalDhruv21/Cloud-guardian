@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { getSecurityEvents, runSecurityScan } from '@/lib/api'
+import { getSecurityEvents, runSecurityScan, fixSecurityIssue } from '@/lib/api'
 
 export default function SecurityPage() {
   const router = useRouter()
@@ -9,6 +9,7 @@ export default function SecurityPage() {
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<any>(null)
+  const [fixingId, setFixingId] = useState<string | null>(null)
   const [tab, setTab] = useState<'all' | 'auto-fixed' | 'review'>('all')
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
@@ -30,6 +31,19 @@ export default function SecurityPage() {
     interval = setInterval(() => fetchEvents(false), 5000)
     return () => clearInterval(interval)
   }, [])
+
+  const handleFixIssue = async (issueType: string, resourceId: string, eventKey: string) => {
+    setFixingId(eventKey)
+    try {
+      await fixSecurityIssue(issueType, resourceId)
+      const data = await getSecurityEvents()
+      setEvents(data.events || [])
+    } catch (err) {
+      console.error('Fix failed:', err)
+    } finally {
+      setFixingId(null)
+    }
+  }
 
   const handleScanNow = async () => {
     setScanning(true)
@@ -197,13 +211,23 @@ export default function SecurityPage() {
 
                     {/* Buttons */}
                     <div className="flex items-center gap-3">
+                      {!isFixed && event.issue_type && (
+                        <button
+                          onClick={() => handleFixIssue(event.issue_type, event.instance_id, `${event.instance_id}-${event.timestamp}`)}
+                          disabled={fixingId === `${event.instance_id}-${event.timestamp}`}
+                          className="text-xs font-bold px-4 py-2 rounded-lg transition-all hover:scale-105 disabled:opacity-50"
+                          style={{background: 'rgba(248,113,113,0.15)', color: '#F87171', border: '1px solid rgba(248,113,113,0.3)'}}
+                        >
+                          {fixingId === `${event.instance_id}-${event.timestamp}` ? '⏳ Fixing…' : '🔧 Fix this'}
+                        </button>
+                      )}
                       {!isFixed && (
                         <button
                           onClick={() => router.push('/agent-ai')}
                           className="text-xs font-bold px-4 py-2 rounded-lg transition-all hover:scale-105"
                           style={{background: 'rgba(16,185,129,0.15)', color: '#34D399', border: '1px solid rgba(16,185,129,0.3)', boxShadow: '0 0 10px rgba(16,185,129,0.1)'}}
                         >
-                          🤖 Ask AI to investigate
+                          🤖 Ask AI
                         </button>
                       )}
                       <button

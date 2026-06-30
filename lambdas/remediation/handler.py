@@ -38,7 +38,7 @@ def send_alert(subject, message):
     sns = boto3.client('sns', region_name='us-east-1')
     sns.publish(TopicArn=sns_arn, Subject=subject, Message=message)
 
-def save_security_event(event_type, resource_id, detail, account_id=None, user_id=None, reverted=False, revert_seconds=None):
+def save_security_event(event_type, resource_id, detail, account_id=None, user_id=None, issue_type=None):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     item = {
@@ -48,89 +48,62 @@ def save_security_event(event_type, resource_id, detail, account_id=None, user_i
         'severity': 'critical',
         'summary': f"Security event: {event_type} on {resource_id}",
         'likely_cause': detail,
-        'recommended_action': 'Auto-reverted by Cloud Guardian' if reverted else 'Manual review required',
+        'recommended_action': 'Click "Fix this" in Cloud Guardian to remediate',
         'cost_impact': 'No cost impact',
-        'resolved': reverted,
-        'reverted': reverted,
-        'revert_seconds': str(revert_seconds) if revert_seconds else None
+        'resolved': False,
+        'reverted': False,
     }
+    if issue_type:
+        item['issue_type'] = issue_type
     if account_id:
         item['account_id'] = account_id
     if user_id:
         item['user_id'] = user_id
     table.put_item(Item=item)
 
-def revert_open_port_22(sg_id, role_arn, region, account_id, user_id):
+def detect_open_port_22(sg_id, role_arn, region, account_id, user_id):
+    """Detect open SSH and create a security event. Fix requires user action."""
     ec2 = get_assumed_client('ec2', role_arn, region)
-    start_time = datetime.now(timezone.utc)
     try:
-        response = ec2.describe_security_groups(GroupIds=[sg_id])
-        sg = response['SecurityGroups'][0]
+        sg_resp = ec2.describe_security_groups(GroupIds=[sg_id])
+        sg = sg_resp['SecurityGroups'][0]
         for rule in sg.get('IpPermissions', []):
             if rule.get('FromPort') == 22 and rule.get('ToPort') == 22:
                 for ip_range in rule.get('IpRanges', []):
                     if ip_range.get('CidrIp') == '0.0.0.0/0':
-                        reverted = False
-                        revert_secs = None
-                        try:
-                            ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=[{
-                                'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22,
-                                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
-                            }])
-                            reverted = True
-                            revert_secs = (datetime.now(timezone.utc) - start_time).seconds
-                        except Exception as e:
-                            print(f"Error revoking port 22: {e}")
-                            
-                        save_security_event('Port 22 opened to 0.0.0.0/0', sg_id,
-                            f'port 22 to 0.0.0.0/0 detected', account_id=account_id, user_id=user_id,
-                            reverted=reverted, revert_seconds=revert_secs)
-                            
-                        if reverted:
-                            send_alert(f"[CRITICAL] Port 22 auto-reverted — {sg_id}",
-                                f"Account {account_id}: SG {sg_id} had port 22 open. Reverted in {revert_secs}s.")
-                        else:
-                            send_alert(f"[CRITICAL] Port 22 open (Remediation Failed) — {sg_id}",
-                                f"Account {account_id}: SG {sg_id} has port 22 open but auto-remediation failed.")
+                        save_security_event(
+                            'Port 22 opened to 0.0.0.0/0', sg_id,
+                            f'Security group {sg_id} allows SSH from any IP (0.0.0.0/0)',
+                            account_id=account_id, user_id=user_id,
+                            issue_type='OPEN_SSH'
+                        )
+                        send_alert(
+                            f"[CRITICAL] Port 22 open to internet — {sg_id}",
+                            f"Account {account_id}: SG {sg_id} has port 22 open to 0.0.0.0/0.\n"
+                            f"Log in to Cloud Guardian and click 'Fix this' to remediate."
+                        )
                         return True
     except Exception as e:
-        print(f"Error analyzing port 22: {e}")
+        print(f"Error detecting port 22: {e}")
     return False
 
 WHITELISTED_BUCKETS = ['cloud-guardian-4626']
 
-def revert_public_s3(bucket_name, role_arn, region, account_id, user_id):
+def detect_public_s3(bucket_name, account_id, user_id):
+    """Detect public S3 and create a security event. Fix requires user action."""
     if bucket_name in WHITELISTED_BUCKETS:
-        print(f"Skipping whitelisted bucket: {bucket_name}")
         return False
-    s3 = get_assumed_client('s3', role_arn, region)
-    start_time = datetime.now(timezone.utc)
-    
-    reverted = False
-    revert_secs = None
-    
-    try:
-        s3.put_public_access_block(Bucket=bucket_name, PublicAccessBlockConfiguration={
-            'BlockPublicAcls': True, 'IgnorePublicAcls': True,
-            'BlockPublicPolicy': True, 'RestrictPublicBuckets': True
-        })
-        reverted = True
-        revert_secs = (datetime.now(timezone.utc) - start_time).seconds
-    except Exception as e:
-        print(f"Error blocking S3: {e}")
-        
-    save_security_event('S3 bucket made public', bucket_name,
-        f'Bucket {bucket_name} public access block missing or disabled', account_id=account_id,
-        user_id=user_id, reverted=reverted, revert_seconds=revert_secs)
-        
-    if reverted:
-        send_alert(f"[CRITICAL] S3 public access blocked — {bucket_name}",
-            f"Account {account_id}: Bucket {bucket_name} blocked in {revert_secs}s.")
-    else:
-        send_alert(f"[CRITICAL] S3 public access detected (Remediation Failed) — {bucket_name}",
-            f"Account {account_id}: Bucket {bucket_name} is public but auto-remediation failed.")
-    
-    return reverted
+    save_security_event(
+        'S3 bucket made public', bucket_name,
+        f'Bucket {bucket_name} has public access — Block Public Access not configured',
+        account_id=account_id, user_id=user_id, issue_type='PUBLIC_S3'
+    )
+    send_alert(
+        f"[CRITICAL] Public S3 bucket detected — {bucket_name}",
+        f"Account {account_id}: Bucket {bucket_name} is publicly accessible.\n"
+        f"Log in to Cloud Guardian and click 'Fix this' to remediate."
+    )
+    return True
     
     
 def handle_root_account_usage(event_time, source_ip, account_id=None, user_id=None):
@@ -140,8 +113,7 @@ def handle_root_account_usage(event_time, source_ip, account_id=None, user_id=No
         f'Root user logged in from IP {source_ip} at {event_time} — root should never be used for daily operations',
         account_id=account_id,
         user_id=user_id,
-        reverted=False,
-        revert_seconds=None
+        issue_type='ROOT_LOGIN',
     )
     send_alert(
         "[CRITICAL] Root account login detected",
@@ -174,7 +146,7 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
                 if rule.get('FromPort') == 22:
                     for ip in rule.get('IpRanges', []):
                         if ip.get('CidrIp') == '0.0.0.0/0':
-                            revert_open_port_22(sg['GroupId'], role_arn, region, account_id, user_id)
+                            detect_open_port_22(sg['GroupId'], role_arn, region, account_id, user_id)
                             issues += 1
     except Exception as e:
         print(f"SG scan error: {e}")
@@ -187,11 +159,11 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
                 if not all([config.get('BlockPublicAcls'), config.get('IgnorePublicAcls'),
                             config.get('BlockPublicPolicy'), config.get('RestrictPublicBuckets')]):
                     if bucket['Name'] not in WHITELISTED_BUCKETS:
-                        revert_public_s3(bucket['Name'], role_arn, region, account_id, user_id)
+                        detect_public_s3(bucket['Name'], account_id, user_id)
                     issues += 1
             except Exception:
                 if bucket['Name'] not in WHITELISTED_BUCKETS:
-                    revert_public_s3(bucket['Name'], role_arn, region, account_id, user_id)
+                    detect_public_s3(bucket['Name'], account_id, user_id)
                 issues += 1
     except Exception as e:
         print(f"S3 scan error: {e}")
@@ -246,7 +218,7 @@ def main(event=None, context=None):
     if event_name == 'AuthorizeSecurityGroupIngress':
         sg_id = detail.get('requestParameters', {}).get('groupId', '')
         if sg_id:
-            revert_open_port_22(sg_id, role_arn, region, account_id, user_id)
+            detect_open_port_22(sg_id, role_arn, region, account_id, user_id)
     elif event_name in ['CreateBucket', 'PutBucketAcl', 'PutBucketPolicy', 'DeletePublicAccessBlock', 'PutBucketPublicAccessBlock']:
         bucket_name = detail.get('requestParameters', {}).get('bucketName', '')
         if not bucket_name:
@@ -263,9 +235,9 @@ def main(event=None, context=None):
                     config.get('RestrictPublicBuckets', True),
                 ])
                 if not block_all:
-                    revert_public_s3(bucket_name, role_arn, region, account_id, user_id)
+                    detect_public_s3(bucket_name, account_id, user_id)
             else:
-                revert_public_s3(bucket_name, role_arn, region, account_id, user_id)
+                detect_public_s3(bucket_name, account_id, user_id)
 
     return {'statusCode': 200, 'body': 'Remediation check complete'}
 

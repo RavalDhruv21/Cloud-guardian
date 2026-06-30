@@ -356,14 +356,14 @@ INSTRUCTIONS:
 # ── POST /security/scan ────────────────────────────────────
 _SCAN_WHITELIST = ['cloud-guardian-4626']
 
-def _save_security_event_deduped(resource_id, event_type_label, detail, account_id, user_id, reverted):
-    """Save a security event, suppressing duplicates within 1 hour."""
+def _save_security_event_deduped(resource_id, issue_type, event_label, detail, account_id, user_id):
+    """Save a security event (detection-only). Suppresses duplicates within 1 hour."""
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     existing = table.scan(
-        FilterExpression='instance_id = :r AND #ts > :c AND event_type = :et',
+        FilterExpression='instance_id = :r AND #ts > :c AND event_type = :et AND resolved = :f',
         ExpressionAttributeNames={'#ts': 'timestamp'},
-        ExpressionAttributeValues={':r': resource_id, ':c': cutoff, ':et': 'security'}
+        ExpressionAttributeValues={':r': resource_id, ':c': cutoff, ':et': 'security', ':f': False}
     )
     if existing.get('Items'):
         return False
@@ -371,26 +371,44 @@ def _save_security_event_deduped(resource_id, event_type_label, detail, account_
         'instance_id': resource_id,
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'event_type': 'security',
+        'issue_type': issue_type,
         'severity': 'critical',
-        'summary': f'Security event: {event_type_label} on {resource_id}',
+        'summary': f'Security event: {event_label} on {resource_id}',
         'likely_cause': detail,
-        'recommended_action': 'Auto-reverted by Cloud Guardian' if reverted else 'Manual review required',
+        'recommended_action': 'Click "Fix this" to remediate',
         'cost_impact': 'No cost impact',
-        'resolved': reverted,
-        'reverted': reverted,
+        'resolved': False,
+        'reverted': False,
         'account_id': account_id,
         'user_id': user_id,
     })
     return True
 
+
+def _mark_security_event_resolved(resource_id):
+    """Mark all unresolved security events for a resource as fixed."""
+    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    result = table.scan(
+        FilterExpression='instance_id = :r AND event_type = :et AND resolved = :f',
+        ExpressionAttributeValues={':r': resource_id, ':et': 'security', ':f': False}
+    )
+    for item in result.get('Items', []):
+        table.update_item(
+            Key={'instance_id': item['instance_id'], 'timestamp': item['timestamp']},
+            UpdateExpression='SET resolved = :t, reverted = :t, resolved_at = :at',
+            ExpressionAttributeValues={':t': True, ':at': datetime.now(timezone.utc).isoformat()}
+        )
+
+
 def scan_security_now(user_id='default-user'):
+    """Detection only — no auto-fix. Creates security events for user to review and fix."""
     role_arn, region, account_id = get_user_role_arn(user_id=user_id)
     if not account_id:
         return response(200, {'issues': [], 'account_id': None, 'message': 'No AWS account connected'})
 
     issues = []
 
-    # ── Check security groups for open SSH ────────────────
+    # ── Check SGs for SSH open to the world ───────────────
     try:
         ec2 = get_assumed_client('ec2', role_arn, region)
         for sg in ec2.describe_security_groups()['SecurityGroups']:
@@ -398,21 +416,13 @@ def scan_security_now(user_id='default-user'):
                 if rule.get('FromPort') == 22 and rule.get('ToPort') == 22:
                     for ip_range in rule.get('IpRanges', []):
                         if ip_range.get('CidrIp') == '0.0.0.0/0':
-                            reverted = False
-                            try:
-                                ec2.revoke_security_group_ingress(GroupId=sg['GroupId'], IpPermissions=[{
-                                    'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22,
-                                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
-                                }])
-                                reverted = True
-                            except Exception as e:
-                                print(f"Port 22 revoke failed: {e}")
                             _save_security_event_deduped(
-                                sg['GroupId'], 'Port 22 opened to 0.0.0.0/0',
-                                f'Port 22 open to 0.0.0.0/0 on {sg["GroupId"]}',
-                                account_id, user_id, reverted
+                                sg['GroupId'], 'OPEN_SSH',
+                                'Port 22 opened to 0.0.0.0/0',
+                                f'Security group {sg["GroupId"]} allows SSH from any IP',
+                                account_id, user_id
                             )
-                            issues.append({'type': 'OPEN_SSH', 'resource': sg['GroupId'], 'reverted': reverted})
+                            issues.append({'type': 'OPEN_SSH', 'resource': sg['GroupId']})
     except Exception as e:
         print(f"SG scan error: {e}")
 
@@ -436,21 +446,13 @@ def scan_security_now(user_id='default-user'):
                 pass
 
             if is_public:
-                reverted = False
-                try:
-                    s3.put_public_access_block(Bucket=name, PublicAccessBlockConfiguration={
-                        'BlockPublicAcls': True, 'IgnorePublicAcls': True,
-                        'BlockPublicPolicy': True, 'RestrictPublicBuckets': True
-                    })
-                    reverted = True
-                except Exception as e:
-                    print(f"S3 block failed for {name}: {e}")
                 _save_security_event_deduped(
-                    name, 'S3 bucket made public',
-                    f'Bucket {name} public access block missing or disabled',
-                    account_id, user_id, reverted
+                    name, 'PUBLIC_S3',
+                    'S3 bucket made public',
+                    f'Bucket {name} has public access — no Block Public Access configured',
+                    account_id, user_id
                 )
-                issues.append({'type': 'PUBLIC_S3', 'resource': name, 'reverted': reverted})
+                issues.append({'type': 'PUBLIC_S3', 'resource': name})
     except Exception as e:
         print(f"S3 scan error: {e}")
 
@@ -460,6 +462,54 @@ def scan_security_now(user_id='default-user'):
         'account_id': account_id,
         'scanned_at': datetime.now(timezone.utc).isoformat(),
     })
+
+
+def security_fix(body):
+    """User-initiated fix for a detected security issue."""
+    user_id = body.get('user_id', 'default-user')
+    issue_type = body.get('issue_type', '')
+    resource_id = body.get('resource_id', '')
+
+    if not resource_id or not issue_type:
+        return response(400, {'error': 'issue_type and resource_id are required'})
+
+    role_arn, region, account_id = get_user_role_arn(user_id=user_id)
+    if not account_id:
+        return response(400, {'error': 'No AWS account connected'})
+
+    if issue_type == 'PUBLIC_S3':
+        try:
+            s3 = get_assumed_client('s3', role_arn, region)
+            s3.put_public_access_block(Bucket=resource_id, PublicAccessBlockConfiguration={
+                'BlockPublicAcls': True, 'IgnorePublicAcls': True,
+                'BlockPublicPolicy': True, 'RestrictPublicBuckets': True
+            })
+            _mark_security_event_resolved(resource_id)
+            return response(200, {
+                'fixed': True,
+                'resource_id': resource_id,
+                'message': f'Block Public Access enabled on {resource_id}',
+            })
+        except Exception as e:
+            return response(500, {'fixed': False, 'error': str(e)})
+
+    if issue_type == 'OPEN_SSH':
+        try:
+            ec2 = get_assumed_client('ec2', role_arn, region)
+            ec2.revoke_security_group_ingress(GroupId=resource_id, IpPermissions=[{
+                'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22,
+                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+            }])
+            _mark_security_event_resolved(resource_id)
+            return response(200, {
+                'fixed': True,
+                'resource_id': resource_id,
+                'message': f'SSH (port 22) rule removed from {resource_id}',
+            })
+        except Exception as e:
+            return response(500, {'fixed': False, 'error': str(e)})
+
+    return response(400, {'error': f'Unknown issue_type: {issue_type}'})
 
 
 # ── GET /compliance-score ──────────────────────────────────
@@ -886,6 +936,7 @@ def main(event, context):
         ('GET',  '/reports/content'):          lambda: get_report_content(query.get('key', ''), request_region),
         ('POST', '/agent'):                    lambda: ask_agent(body),
         ('POST', '/security/scan'):            lambda: scan_security_now(user_id),
+        ('POST', '/security/fix'):             lambda: security_fix(body),
         ('GET',  '/compliance-score'):         lambda: get_compliance_score(user_id),
         ('GET',  '/cost-forecast'):            lambda: get_cost_forecast(user_id),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),

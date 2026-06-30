@@ -226,6 +226,11 @@ export const runSecurityScan = async () => {
   return res.data
 }
 
+export const fixSecurityIssue = async (issueType: string, resourceId: string) => {
+  const res = await api.post('/security/fix', { issue_type: issueType, resource_id: resourceId })
+  return res.data
+}
+
 // ── Compliance score ──────────────────────────────────────
 export const getComplianceScore = async () => {
   if (!isLocalConnected()) return { score: null, violations: [], account_id: null }
