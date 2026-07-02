@@ -39,11 +39,30 @@ def send_alert(subject, message):
     sns.publish(TopicArn=sns_arn, Subject=subject, Message=message)
 
 def save_security_event(event_type, resource_id, detail, account_id=None, user_id=None, issue_type=None):
+    """Save a security event, or refresh last_seen if an unresolved one already exists for
+    this resource + issue_type. Without this check, the 5-minute schedule and CloudTrail
+    forwarders would re-write a fresh row for the same unfixed issue on every invocation."""
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    now = datetime.now(timezone.utc).isoformat()
+
+    existing = table.scan(
+        FilterExpression='instance_id = :r AND event_type = :et AND issue_type = :it AND resolved = :f',
+        ExpressionAttributeValues={':r': resource_id, ':et': 'security', ':it': issue_type, ':f': False}
+    )
+    items = existing.get('Items', [])
+    if items:
+        latest = max(items, key=lambda i: i.get('timestamp', ''))
+        table.update_item(
+            Key={'instance_id': latest['instance_id'], 'timestamp': latest['timestamp']},
+            UpdateExpression='SET last_seen = :ls',
+            ExpressionAttributeValues={':ls': now}
+        )
+        return
+
     item = {
         'instance_id': resource_id,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'timestamp': now,
         'event_type': 'security',
         'severity': 'critical',
         'summary': f"Security event: {event_type} on {resource_id}",
@@ -52,6 +71,7 @@ def save_security_event(event_type, resource_id, detail, account_id=None, user_i
         'cost_impact': 'No cost impact',
         'resolved': False,
         'reverted': False,
+        'last_seen': now,
     }
     if issue_type:
         item['issue_type'] = issue_type

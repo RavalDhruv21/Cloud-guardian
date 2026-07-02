@@ -357,19 +357,27 @@ INSTRUCTIONS:
 _SCAN_WHITELIST = ['cloud-guardian-4626']
 
 def _save_security_event_deduped(resource_id, issue_type, event_label, detail, account_id, user_id):
-    """Save a security event (detection-only). Suppresses duplicates within 1 hour."""
+    """Save a security event (detection-only). Skips creating a new row while an
+    unresolved event already exists for this resource + issue_type — just refreshes
+    last_seen on the existing row instead, so repeated scans don't pile up duplicates."""
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     existing = table.scan(
-        FilterExpression='instance_id = :r AND #ts > :c AND event_type = :et AND resolved = :f',
-        ExpressionAttributeNames={'#ts': 'timestamp'},
-        ExpressionAttributeValues={':r': resource_id, ':c': cutoff, ':et': 'security', ':f': False}
+        FilterExpression='instance_id = :r AND event_type = :et AND issue_type = :it AND resolved = :f',
+        ExpressionAttributeValues={':r': resource_id, ':et': 'security', ':it': issue_type, ':f': False}
     )
-    if existing.get('Items'):
+    items = existing.get('Items', [])
+    if items:
+        latest = max(items, key=lambda i: i.get('timestamp', ''))
+        table.update_item(
+            Key={'instance_id': latest['instance_id'], 'timestamp': latest['timestamp']},
+            UpdateExpression='SET last_seen = :ls',
+            ExpressionAttributeValues={':ls': now}
+        )
         return False
     table.put_item(Item={
         'instance_id': resource_id,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'timestamp': now,
         'event_type': 'security',
         'issue_type': issue_type,
         'severity': 'critical',
@@ -381,6 +389,7 @@ def _save_security_event_deduped(resource_id, issue_type, event_label, detail, a
         'reverted': False,
         'account_id': account_id,
         'user_id': user_id,
+        'last_seen': now,
     })
     return True
 

@@ -142,38 +142,42 @@ def send_sns_alert(diagnosis, metric, account_id=None):
     sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=subject, Message=message)
 
 
-ANOMALY_SUPPRESSION_HOURS = 6  # same anomaly won't be re-saved within this window
-
-def _is_recent_anomaly(table, instance_id, summary, window_hours):
-    """Returns True if an identical unresolved anomaly exists within window_hours."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+def _find_open_anomaly(table, instance_id, summary):
+    """Returns the existing unresolved anomaly with this instance_id + summary, if any."""
     result = table.scan(
-        FilterExpression=(
-            'instance_id = :iid AND #ts > :cutoff AND summary = :summary AND resolved = :r'
-        ),
-        ExpressionAttributeNames={'#ts': 'timestamp'},
+        FilterExpression='instance_id = :iid AND summary = :summary AND resolved = :r',
         ExpressionAttributeValues={
             ':iid': instance_id,
-            ':cutoff': cutoff,
             ':summary': summary,
             ':r': False,
         }
     )
-    return len(result.get('Items', [])) > 0
+    items = result.get('Items', [])
+    if not items:
+        return None
+    return max(items, key=lambda i: i.get('timestamp', ''))
 
 def save_anomaly(instance_id, metrics, diagnosis, account_id=None, user_id=None):
-    """Saves anomaly only if no identical unresolved anomaly exists within the suppression window.
-    Returns True if saved, False if suppressed."""
+    """Saves anomaly only if no identical unresolved anomaly already exists; otherwise just
+    refreshes last_seen on the existing row so repeated runs don't pile up duplicates.
+    Returns True if a new row was saved, False if an existing one was refreshed."""
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
 
-    if _is_recent_anomaly(table, instance_id, diagnosis['summary'], ANOMALY_SUPPRESSION_HOURS):
-        print(f"  Suppressed duplicate anomaly for {instance_id} (within {ANOMALY_SUPPRESSION_HOURS}h window)")
+    now = datetime.now(timezone.utc).isoformat()
+    existing = _find_open_anomaly(table, instance_id, diagnosis['summary'])
+    if existing:
+        table.update_item(
+            Key={'instance_id': existing['instance_id'], 'timestamp': existing['timestamp']},
+            UpdateExpression='SET last_seen = :ls, metrics_snapshot = :ms',
+            ExpressionAttributeValues={':ls': now, ':ms': json.dumps(metrics, default=str)}
+        )
+        print(f"  Refreshed existing unresolved anomaly for {instance_id}")
         return False
 
     item = {
         'instance_id': instance_id,
-        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'timestamp': now,
         'metrics_snapshot': json.dumps(metrics, default=str),
         'severity': diagnosis['severity'],
         'summary': diagnosis['summary'],
@@ -181,6 +185,7 @@ def save_anomaly(instance_id, metrics, diagnosis, account_id=None, user_id=None)
         'recommended_action': diagnosis['recommended_action'],
         'cost_impact': diagnosis['estimated_monthly_cost_impact'],
         'resolved': False,
+        'last_seen': now,
     }
     if account_id:
         item['account_id'] = account_id
