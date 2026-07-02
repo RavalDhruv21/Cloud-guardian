@@ -1,6 +1,7 @@
 import boto3
 import json
 import os
+from botocore.exceptions import ClientError
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
@@ -181,10 +182,15 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
                     if bucket['Name'] not in WHITELISTED_BUCKETS:
                         detect_public_s3(bucket['Name'], account_id, user_id)
                     issues += 1
-            except Exception:
-                if bucket['Name'] not in WHITELISTED_BUCKETS:
-                    detect_public_s3(bucket['Name'], account_id, user_id)
-                issues += 1
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchPublicAccessBlockConfiguration':
+                    if bucket['Name'] not in WHITELISTED_BUCKETS:
+                        detect_public_s3(bucket['Name'], account_id, user_id)
+                    issues += 1
+                else:
+                    print(f"Skipping {bucket['Name']}: {e.response['Error']['Code']}")
+            except Exception as e:
+                print(f"Skipping {bucket['Name']}: {e}")
     except Exception as e:
         print(f"S3 scan error: {e}")
     return issues
