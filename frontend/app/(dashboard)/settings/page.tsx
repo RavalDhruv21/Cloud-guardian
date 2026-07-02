@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+import { getUserProfile as fetchUserProfile, updateUserProfile, getConnectedAccount, disconnectAccount } from '@/lib/api'
 
 interface UserProfile {
   name: string
@@ -152,11 +151,50 @@ export default function SettingsPage() {
   const [currentRegion, setCurrentRegion] = useState('us-east-1')
 
   useEffect(() => {
+    // Paint immediately from the local cache, then reconcile with the backend —
+    // the cache is wiped on logout, so it's stale/empty right after a fresh login.
     const local = getUserProfile()
     if (local.name) setProfile(local)
     if (typeof window !== 'undefined') {
       setCurrentRegion(localStorage.getItem('selected_region') || 'us-east-1')
     }
+
+    ;(async () => {
+      try {
+        const [profileRes, accountRes] = await Promise.all([
+          fetchUserProfile().catch(() => null),
+          getConnectedAccount().catch(() => null),
+        ])
+        const remote = profileRes?.profile
+        if (remote) {
+          const merged: UserProfile = {
+            ...defaultProfile,
+            ...local,
+            name: remote.name || local.name,
+            email: remote.email || local.email,
+            avatar_initials: remote.avatar_initials || local.avatar_initials,
+            company: remote.company || local.company,
+            role: remote.role || local.role,
+            timezone: remote.timezone || local.timezone,
+            notification_email: remote.notification_email || local.notification_email,
+            slack_webhook: remote.slack_webhook || local.slack_webhook,
+            alert_email: remote.alert_email ?? local.alert_email,
+            alert_slack: remote.alert_slack ?? local.alert_slack,
+            aws_account_id: accountRes?.account_id || '',
+            aws_role_arn: remote.aws_role_arn || '',
+            aws_region: accountRes?.region || remote.aws_region || local.aws_region,
+          }
+          setProfile(merged)
+          saveUserProfile(merged)
+          if (accountRes?.account_id) {
+            localStorage.setItem('aws_connected', 'true')
+            localStorage.setItem('connected_account_id', accountRes.account_id)
+          }
+        }
+      } catch {
+        // Backend fetch failed — keep whatever was in the local cache.
+      }
+    })()
   }, [])
 
   const showToast = (msg: string) => {
@@ -170,14 +208,36 @@ export default function SettingsPage() {
     const initials = profile.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     const updated = { ...profile, avatar_initials: initials }
     setProfile(updated)
-    saveUserProfile(updated)
+    try {
+      await updateUserProfile({
+        name: updated.name,
+        email: updated.email,
+        avatar_initials: updated.avatar_initials,
+        company: updated.company,
+        role: updated.role,
+        timezone: updated.timezone,
+        notification_email: updated.notification_email,
+        slack_webhook: updated.slack_webhook,
+        alert_email: updated.alert_email,
+        alert_slack: updated.alert_slack,
+      })
+      saveUserProfile(updated)
+      showToast('Settings saved!')
+    } catch {
+      showToast('Failed to save — try again')
+    }
     setSaving(false)
     setSaved(true)
-    showToast('Settings saved!')
     setTimeout(() => setSaved(false), 3000)
   }
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
+    try {
+      await disconnectAccount()
+    } catch {
+      showToast('Failed to disconnect — try again')
+      return
+    }
     const updated = { ...profile, aws_account_id: '', aws_role_arn: '' }
     setProfile(updated)
     saveUserProfile(updated)

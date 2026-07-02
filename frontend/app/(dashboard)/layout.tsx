@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { getAnomalies } from '@/lib/api'
+import { getAnomalies, getConnectedAccount } from '@/lib/api'
 import { getRegion, setRegion } from '@/lib/region'
 import { logoutUser, getCurrentUser, switchAccount } from '@/lib/auth'
 
@@ -118,7 +118,7 @@ export default function DashboardLayout({
     return () => window.removeEventListener('region-changed', handleRegionChange)
   }, [])
 
-  // Load profile and AWS connection state
+  // Load profile and AWS connection state (from localStorage cache first, for snappy paint)
   useEffect(() => {
     const updateProfileAndAWS = () => {
       setProfile(getStoredProfile())
@@ -129,6 +129,33 @@ export default function DashboardLayout({
     window.addEventListener('profile-updated', updateProfileAndAWS)
     return () => window.removeEventListener('profile-updated', updateProfileAndAWS)
   }, [])
+
+  // Reconcile AWS connection state with the backend — the localStorage cache above
+  // gets wiped on logout, so after a fresh login it's stale until this runs.
+  useEffect(() => {
+    if (!authChecked) return
+    const syncConnection = async () => {
+      try {
+        const data = await getConnectedAccount()
+        if (data?.account_id) {
+          localStorage.setItem('aws_connected', 'true')
+          localStorage.setItem('connected_account_id', data.account_id)
+          if (data.region) localStorage.setItem('selected_region', data.region)
+          setAwsConnected(true)
+          setConnectedAccountId(data.account_id)
+          if (data.region) setCurrentRegion(data.region)
+        } else {
+          localStorage.setItem('aws_connected', 'false')
+          setAwsConnected(false)
+        }
+      } catch {
+        localStorage.setItem('aws_connected', 'false')
+        setAwsConnected(false)
+      }
+      window.dispatchEvent(new Event('profile-updated'))
+    }
+    syncConnection()
+  }, [authChecked])
 
   const handleRegionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setRegion(e.target.value)

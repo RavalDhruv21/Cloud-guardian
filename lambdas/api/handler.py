@@ -713,6 +713,23 @@ def connect_account(body):
     except Exception as e:
         return response(400, {'error': f'Could not assume role: {str(e)}'})
 
+# ── POST /accounts/disconnect ───────────────────────────────
+def disconnect_account(body):
+    user_id = body.get('user_id')
+    if not user_id:
+        return response(400, {'error': 'user_id required'})
+    try:
+        table = dynamodb.Table('cloud-guardian-users')
+        table.update_item(
+            Key={'user_id': user_id},
+            UpdateExpression="REMOVE account_id, role_arn SET #st = :s",
+            ExpressionAttributeNames={'#st': 'status'},
+            ExpressionAttributeValues={':s': 'disconnected'}
+        )
+        return response(200, {'message': 'Account disconnected'})
+    except Exception as e:
+        return response(500, {'error': str(e)})
+
 # ── GET /accounts/me ───────────────────────────────────────
 def get_connected_account(user_id='default-user'):
     try:
@@ -732,28 +749,47 @@ def get_connected_account(user_id='default-user'):
         return response(500, {'error': str(e)})
 
 # ── POST /users/profile ────────────────────────────────────
+_PROFILE_STRING_FIELDS = {
+    'name': 'name', 'email': 'email', 'avatar_initials': 'avatar_initials',
+    'company': 'company', 'role': 'job_title', 'timezone': 'timezone',
+    'notification_email': 'notification_email', 'slack_webhook': 'slack_webhook',
+}
+_PROFILE_BOOL_FIELDS = {'alert_email': 'alert_email', 'alert_slack': 'alert_slack'}
+
 def update_user_profile(body):
     user_id = body.get('user_id')
     if not user_id:
         return response(400, {'error': 'user_id required'})
-    
+
     table = dynamodb.Table('cloud-guardian-users')
-    
-    update_expr = "SET #n = :n, email = :e"
-    expr_names = {'#n': 'name'}
-    expr_vals = {
-        ':n': body.get('name', 'User'),
-        ':e': body.get('email', ''),
-    }
-    
-    if 'avatar_initials' in body:
-        update_expr += ", avatar_initials = :a"
-        expr_vals[':a'] = body['avatar_initials']
-        
+
+    update_parts = []
+    expr_names = {}
+    expr_vals = {}
+
+    for field, attr in _PROFILE_STRING_FIELDS.items():
+        if field in body:
+            placeholder_name = f'#{attr}'
+            placeholder_val = f':{attr}'
+            update_parts.append(f'{placeholder_name} = {placeholder_val}')
+            expr_names[placeholder_name] = attr
+            expr_vals[placeholder_val] = body[field]
+
+    for field, attr in _PROFILE_BOOL_FIELDS.items():
+        if field in body:
+            placeholder_name = f'#{attr}'
+            placeholder_val = f':{attr}'
+            update_parts.append(f'{placeholder_name} = {placeholder_val}')
+            expr_names[placeholder_name] = attr
+            expr_vals[placeholder_val] = bool(body[field])
+
+    if not update_parts:
+        return response(400, {'error': 'No profile fields to update'})
+
     try:
         table.update_item(
             Key={'user_id': user_id},
-            UpdateExpression=update_expr,
+            UpdateExpression='SET ' + ', '.join(update_parts),
             ExpressionAttributeNames=expr_names,
             ExpressionAttributeValues=expr_vals
         )
@@ -765,20 +801,29 @@ def update_user_profile(body):
 def get_user_profile(user_id):
     if not user_id or user_id == 'default-user':
         return response(400, {'error': 'user_id required'})
-        
+
     try:
         table = dynamodb.Table('cloud-guardian-users')
         result = table.get_item(Key={'user_id': user_id})
         item = result.get('Item', {})
-        
+
         aws_connected = bool(item.get('account_id') and item.get('role_arn'))
-        
+
         profile = {
             'name': item.get('name', 'User'),
             'email': item.get('email', ''),
             'avatar_initials': item.get('avatar_initials', 'U'),
+            'company': item.get('company', ''),
+            'role': item.get('job_title', ''),
+            'timezone': item.get('timezone', 'Asia/Kolkata'),
+            'notification_email': item.get('notification_email', ''),
+            'slack_webhook': item.get('slack_webhook', ''),
+            'alert_email': item.get('alert_email', True),
+            'alert_slack': item.get('alert_slack', False),
             'aws_connected': aws_connected,
-            'connected_account_id': item.get('account_id', '')
+            'connected_account_id': item.get('account_id', ''),
+            'aws_role_arn': item.get('role_arn', ''),
+            'aws_region': item.get('region', 'us-east-1'),
         }
         return response(200, {'profile': profile})
     except Exception as e:
@@ -950,6 +995,7 @@ def main(event, context):
         ('GET',  '/cost-forecast'):            lambda: get_cost_forecast(user_id),
         ('POST', '/accounts/connect'):         lambda: connect_account(body),
         ('GET',  '/accounts/me'):              lambda: get_connected_account(query.get('user_id', user_id)),
+        ('POST', '/accounts/disconnect'):      lambda: disconnect_account(body),
         ('GET',  '/audit-logs'):               lambda: get_audit_logs(request_region, user_id),
         ('POST', '/users/profile'):            lambda: update_user_profile(body),
         ('GET',  '/users/profile'):            lambda: get_user_profile(user_id),

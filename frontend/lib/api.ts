@@ -103,6 +103,7 @@ const getRegion = () =>
 
 const isLocalConnected = () => {
   if (typeof window === 'undefined') return true;
+  if (localStorage.getItem('aws_connected') === 'true') return true
   try {
     const stored = localStorage.getItem('cg_user_profile')
     if (!stored) return false;
@@ -220,6 +221,11 @@ export const getAccounts = async () => {
   return res.data
 }
 
+export const disconnectAccount = async () => {
+  const res = await api.post('/accounts/disconnect')
+  return res.data
+}
+
 // ── Security scan (on-demand) ─────────────────────────────
 export const runSecurityScan = async () => {
   const res = await api.post('/security/scan')
@@ -251,7 +257,12 @@ export const getUserProfile = async () => {
   return res.data
 }
 
-export const updateUserProfile = async (profileData: { name: string; email: string; avatar_initials: string }) => {
+export const updateUserProfile = async (profileData: {
+  name: string; email: string; avatar_initials: string
+  company?: string; role?: string; timezone?: string
+  notification_email?: string; slack_webhook?: string
+  alert_email?: boolean; alert_slack?: boolean
+}) => {
   const res = await api.post('/users/profile', profileData)
   return res.data
 }
