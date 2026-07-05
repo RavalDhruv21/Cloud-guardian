@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { loginUser, isValidEmail, getCurrentUser } from '@/lib/auth'
-import { signInWithRedirect } from 'aws-amplify/auth'
+import { signInWithRedirect, signOut } from 'aws-amplify/auth'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -133,7 +133,20 @@ export default function LoginPage() {
           {/* Google button */}
           <button
             type="button"
-            onClick={() => signInWithRedirect({ provider: 'Google' })}
+            onClick={async () => {
+              try {
+                await signInWithRedirect({ provider: 'Google' })
+              } catch (err: any) {
+                if (err?.message === 'There is already a signed in user.') {
+                  // A stale/incomplete session from a previous attempt blocks
+                  // a fresh sign-in — clear it and retry once.
+                  await signOut()
+                  await signInWithRedirect({ provider: 'Google' })
+                } else {
+                  console.error('Google sign-in failed:', err)
+                }
+              }
+            }}
             className="google-btn mb-6"
           >
             <svg width="18" height="18" viewBox="0 0 18 18">

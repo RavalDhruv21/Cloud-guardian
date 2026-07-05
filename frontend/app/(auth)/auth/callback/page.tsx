@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
-import { getCurrentUser, fetchUserAttributes } from 'aws-amplify/auth'
+import { getCurrentUser, fetchAuthSession } from 'aws-amplify/auth'
 import { Hub } from 'aws-amplify/utils'
 
 function AuthCallbackInner() {
@@ -42,9 +42,14 @@ function AuthCallbackInner() {
     }
 
     try {
-      const attrs = await fetchUserAttributes()
-      const email = attrs.email || ''
-      const name = attrs.name || attrs.given_name || email.split('@')[0] || 'User'
+      // Read claims off the ID token instead of calling fetchUserAttributes()
+      // (which hits Cognito's GetUser API and requires the
+      // aws.cognito.signin.user.admin scope — a scope this app client isn't
+      // granted, since our oauth config only requests email/openid).
+      const session = await fetchAuthSession()
+      const claims = session.tokens?.idToken?.payload || {}
+      const email = (claims.email as string) || ''
+      const name = (claims.name as string) || (claims.given_name as string) || email.split('@')[0] || 'User'
 
       document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
 
