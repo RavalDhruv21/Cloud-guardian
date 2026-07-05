@@ -11,6 +11,7 @@ load_dotenv()
 
 _COGNITO_REGION = os.getenv('COGNITO_REGION', 'us-east-1')
 _COGNITO_USER_POOL_ID = os.getenv('COGNITO_USER_POOL_ID', 'us-east-1_yqv39lzIR')
+_COGNITO_CLIENT_ID = os.getenv('COGNITO_CLIENT_ID', '5g0e3aalsqv9c9e76i0oi6b6mk')
 _COGNITO_ISSUER = f'https://cognito-idp.{_COGNITO_REGION}.amazonaws.com/{_COGNITO_USER_POOL_ID}'
 _JWKS_URL = f'{_COGNITO_ISSUER}/.well-known/jwks.json'
 _JWKS_CACHE = None
@@ -53,6 +54,11 @@ def get_user_role_arn(user_id='default-user', request_region=None):
         print(f"Error getting user role for {user_id}: {e}")
         return None, request_region or 'us-east-1', None
 
+class RoleAssumptionError(Exception):
+    """Raised when assuming the customer's IAM role fails — callers must fail
+    closed rather than fall back to the Lambda's own AWS credentials, which
+    could act on the wrong AWS account."""
+
 def get_assumed_client(service, role_arn=None, region='us-east-1'):
     if not role_arn:
         return boto3.client(service, region_name=region)
@@ -71,8 +77,7 @@ def get_assumed_client(service, role_arn=None, region='us-east-1'):
             aws_session_token=creds['SessionToken']
         )
     except Exception as e:
-        print(f"Role assumption failed: {e} — falling back to own credentials")
-        return boto3.client(service, region_name=region)
+        raise RoleAssumptionError(f"Role assumption failed for {role_arn}: {e}") from e
 
 # ── Cost optimizer actions ────────────────────────────────
 def stop_ec2(body):
@@ -924,6 +929,9 @@ def verify_token(event):
     try:
         from jose import jwt, JWTError
 
+        # Cognito access tokens (unlike ID tokens) carry no `aud` claim, so
+        # `aud` verification is off — but we replace it with the equivalent
+        # checks Cognito puts on access tokens: token_use and client_id.
         payload = jwt.decode(
             token,
             _get_jwks(),
@@ -931,6 +939,14 @@ def verify_token(event):
             issuer=_COGNITO_ISSUER,
             options={'verify_at_hash': False, 'verify_aud': False}
         )
+
+        if payload.get('token_use') != 'access':
+            print(f"Rejected token with token_use={payload.get('token_use')!r}, expected 'access'")
+            return None
+
+        if _COGNITO_CLIENT_ID and payload.get('client_id') != _COGNITO_CLIENT_ID:
+            print(f"Rejected token with client_id={payload.get('client_id')!r}, expected {_COGNITO_CLIENT_ID!r}")
+            return None
 
         user_id = payload.get('sub') or payload.get('username')
         if not user_id:
@@ -1003,6 +1019,10 @@ def main(event, context):
 
     handler = routes.get((method, path))
     if handler:
-        return handler()
+        try:
+            return handler()
+        except RoleAssumptionError as e:
+            print(str(e))
+            return response(502, {'error': 'Could not assume the connected AWS role. Please reconnect your account.'})
 
     return response(404, {'error': f'Route {method} {path} not found'})

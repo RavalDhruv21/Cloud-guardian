@@ -30,6 +30,11 @@ def get_all_users():
         return []
 
 
+class RoleAssumptionError(Exception):
+    """Raised when assuming the customer's IAM role fails — callers must fail
+    closed rather than fall back to the Lambda's own AWS credentials, which
+    could act on the wrong AWS account."""
+
 def get_assumed_client(service, role_arn, region):
     if not role_arn:
         return boto3.client(service, region_name=region)
@@ -42,8 +47,7 @@ def get_assumed_client(service, role_arn, region):
             aws_secret_access_key=creds['SecretAccessKey'],
             aws_session_token=creds['SessionToken'])
     except Exception as e:
-        print(f"Role assumption failed: {e}")
-        return boto3.client(service, region_name=region)
+        raise RoleAssumptionError(f"Role assumption failed for {role_arn}: {e}") from e
 
 
 def call_gemini(metrics_data):

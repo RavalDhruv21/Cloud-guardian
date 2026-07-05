@@ -21,6 +21,11 @@ def get_all_users():
         return []
 
 
+class RoleAssumptionError(Exception):
+    """Raised when assuming the customer's IAM role fails — callers must fail
+    closed rather than fall back to the Lambda's own AWS credentials, which
+    could act on the wrong AWS account."""
+
 def get_assumed_client(service, role_arn, region):
     if not role_arn:
         return boto3.client(service, region_name=region)
@@ -33,8 +38,7 @@ def get_assumed_client(service, role_arn, region):
             aws_secret_access_key=creds['SecretAccessKey'],
             aws_session_token=creds['SessionToken'])
     except Exception as e:
-        print(f"Role assumption failed: {e} — using own credentials")
-        return boto3.client(service, region_name=region)
+        raise RoleAssumptionError(f"Role assumption failed for {role_arn}: {e}") from e
 
 
 def collect_ec2_metrics(cloudwatch, instance_id):
@@ -149,10 +153,9 @@ def main(event=None, context=None):
         user_id = user.get('user_id')
         print(f"Collecting for user {user_id}, account {account_id}, region {region}")
 
-        ec2 = get_assumed_client('ec2', role_arn, region)
-        cloudwatch = get_assumed_client('cloudwatch', role_arn, region)
-
         try:
+            ec2 = get_assumed_client('ec2', role_arn, region)
+            cloudwatch = get_assumed_client('cloudwatch', role_arn, region)
             instance_ids = list_running_instances(ec2)
             print(f"Found {len(instance_ids)} running instances for {account_id}")
             all_metrics = []
