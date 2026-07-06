@@ -137,12 +137,6 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-_QUEUE_URL = os.getenv(
-    'COLLECTOR_QUEUE_URL',
-    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-collector-queue'
-)
-
-
 def collect_for_user(user):
     """Collect metrics for a single connected account. Raises on failure so the
     SQS event source retries and, after exhausting retries, routes the message
@@ -175,9 +169,10 @@ def dispatch_users():
         print("No connected accounts found")
         return {'statusCode': 200, 'body': json.dumps({'message': 'No accounts to scan'})}
 
+    queue_url = os.environ['COLLECTOR_QUEUE_URL']
     sqs = boto3.client('sqs', region_name='us-east-1')
     for user in users:
-        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user, cls=DecimalEncoder))
+        sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(user, cls=DecimalEncoder))
 
     cleanup_stale_metrics()
     return {

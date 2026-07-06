@@ -245,12 +245,6 @@ def scan_account(role_arn, region, account_id, user_id):
     except Exception as e:
         print(f"EIP scan error: {e}")
 
-_QUEUE_URL = os.getenv(
-    'COST_OPTIMIZER_QUEUE_URL',
-    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-cost-optimizer-queue'
-)
-
-
 def scan_for_user(user):
     """Scan a single connected account. Raises on failure so the SQS event
     source retries and, after exhausting retries, routes the message to the
@@ -273,9 +267,10 @@ def dispatch_users():
     if not users:
         return {'statusCode': 200, 'body': json.dumps({'message': 'No accounts to scan'})}
 
+    queue_url = os.environ['COST_OPTIMIZER_QUEUE_URL']
     sqs = boto3.client('sqs', region_name='us-east-1')
     for user in users:
-        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user))
+        sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(user))
 
     return {'statusCode': 200, 'body': json.dumps({'message': f'Dispatched {len(users)} accounts to the cost-optimizer queue'})}
 

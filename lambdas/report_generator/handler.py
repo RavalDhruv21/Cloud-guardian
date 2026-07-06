@@ -79,12 +79,6 @@ def send_sns(report_text, account_id):
         Message=report_text
     )
 
-_QUEUE_URL = os.getenv(
-    'REPORT_GENERATOR_QUEUE_URL',
-    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-report-generator-queue'
-)
-
-
 def generate_for_user(user):
     """Generate + deliver a report for a single connected account. Raises on
     failure so the SQS event source retries and, after exhausting retries,
@@ -110,9 +104,10 @@ def dispatch_users():
     if not users:
         return {'statusCode': 200, 'body': 'No connected accounts'}
 
+    queue_url = os.environ['REPORT_GENERATOR_QUEUE_URL']
     sqs = boto3.client('sqs', region_name='us-east-1')
     for user in users:
-        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user))
+        sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(user))
 
     return {'statusCode': 200, 'body': json.dumps({'message': f'Dispatched {len(users)} accounts to the report-generator queue'})}
 

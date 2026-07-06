@@ -201,12 +201,6 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
         print(f"S3 scan error: {e}")
     return issues
 
-_QUEUE_URL = os.getenv(
-    'REMEDIATION_QUEUE_URL',
-    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-remediation-queue'
-)
-
-
 def dispatch_users():
     """Fan out: enqueue one SQS message per connected account instead of looping
     through every account serially inside a single (15-minute-capped) invocation."""
@@ -215,9 +209,10 @@ def dispatch_users():
     if not users:
         return {'statusCode': 200, 'body': 'No connected accounts'}
 
+    queue_url = os.environ['REMEDIATION_QUEUE_URL']
     sqs = boto3.client('sqs', region_name='us-east-1')
     for user in users:
-        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user))
+        sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(user))
 
     return {'statusCode': 200, 'body': f'Dispatched {len(users)} accounts to the remediation queue'}
 
