@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta, date
 from decimal import Decimal
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError as BotocoreClientError
+from boto3.dynamodb.conditions import Key
 
 load_dotenv()
 
@@ -126,15 +127,16 @@ def resize_ec2(body):
 # ── GET /metrics ──────────────────────────────────────────
 def get_metrics(account_id=None, region=None):
     table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
-    result = table.scan()
-    items = result.get('Items', [])
     if not account_id:
         return response(200, {'metrics': [], 'account_id': None})
-    if account_id:
-        items = [i for i in items if i.get('account_id') == account_id]
+    result = table.query(
+        IndexName='account_id-timestamp-index',
+        KeyConditionExpression=Key('account_id').eq(account_id),
+        ScanIndexForward=False,
+    )
+    items = result.get('Items', [])
     if region:
         items = [i for i in items if i.get('region', 'us-east-1') == region]
-    items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'metrics': items[:50]})
 
 # ── GET /metrics/history ──────────────────────────────────
@@ -162,13 +164,15 @@ def get_instance_metrics_history(instance_id, region='us-east-1', hours=2, user_
 # ── GET /anomalies ─────────────────────────────────────────
 def get_anomalies(query_params=None, user_id='default-user'):
     _, _, account_id = get_user_role_arn(user_id=user_id)
-    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
-    result = table.scan()
-    items = result.get('Items', [])
     if not account_id:
         return response(200, {'anomalies': []})
-    if account_id:
-        items = [i for i in items if i.get('account_id') == account_id]
+    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    result = table.query(
+        IndexName='account_id-timestamp-index',
+        KeyConditionExpression=Key('account_id').eq(account_id),
+        ScanIndexForward=False,
+    )
+    items = result.get('Items', [])
     if query_params:
         severity = query_params.get('severity')
         resolved = query_params.get('resolved')
@@ -177,7 +181,6 @@ def get_anomalies(query_params=None, user_id='default-user'):
         if resolved is not None:
             is_resolved = resolved.lower() == 'true'
             items = [i for i in items if i.get('resolved', False) == is_resolved]
-    items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'anomalies': items})
 
 # ── POST /anomalies/resolve ────────────────────────────────
@@ -197,22 +200,26 @@ def resolve_anomaly(body):
 # ── GET /cost-suggestions ──────────────────────────────────
 def get_cost_suggestions(query_params=None, user_id='default-user'):
     _, _, account_id = get_user_role_arn(user_id=user_id)
-    table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
-    result = table.scan()
-    items = result.get('Items', [])
     if not account_id:
         return response(200, {'suggestions': []})
-    if account_id:
-        items = [i for i in items if i.get('account_id') == account_id]
+    table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
+    result = table.query(
+        KeyConditionExpression=Key('account_id').eq(account_id),
+        ScanIndexForward=False,
+    )
+    items = result.get('Items', [])
     items = [i for i in items if i.get('status') != 'dismissed']
-    items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return response(200, {'suggestions': items})
 
 # ── POST /cost-suggestions/dismiss ────────────────────────
 def dismiss_suggestion(body):
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
     resource_id = body.get('resource_id')
-    result = table.scan()
+    user_id = body.get('user_id', 'default-user')
+    _, _, account_id = get_user_role_arn(user_id=user_id)
+    if not account_id:
+        return response(404, {'error': 'Suggestion not found'})
+    result = table.query(KeyConditionExpression=Key('account_id').eq(account_id))
     items = result.get('Items', [])
     target = next((i for i in items if i.get('resource_id') == resource_id), None)
     if not target:
@@ -228,15 +235,16 @@ def dismiss_suggestion(body):
 # ── GET /security-events ───────────────────────────────────
 def get_security_events(query_params=None, user_id='default-user'):
     _, _, account_id = get_user_role_arn(user_id=user_id)
-    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
-    result = table.scan()
-    items = result.get('Items', [])
-    security = [i for i in items if i.get('event_type') in ['security', 'remediation']]
     if not account_id:
         return response(200, {'events': []})
-    if account_id:
-        security = [i for i in security if i.get('account_id') == account_id]
-    security.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    result = table.query(
+        IndexName='account_id-timestamp-index',
+        KeyConditionExpression=Key('account_id').eq(account_id),
+        ScanIndexForward=False,
+    )
+    items = result.get('Items', [])
+    security = [i for i in items if i.get('event_type') in ['security', 'remediation']]
     return response(200, {'events': security})
 
 # ── GET /reports ───────────────────────────────────────────
@@ -289,14 +297,18 @@ def ask_agent(body):
     anomalies_table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     cost_table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
 
-    recent_metrics = metrics_table.scan(Limit=10).get('Items', [])
-    recent_anomalies = anomalies_table.scan(Limit=10).get('Items', [])
-    cost_suggestions = cost_table.scan(Limit=10).get('Items', [])
-
     if account_id:
-        recent_metrics = [m for m in recent_metrics if m.get('account_id') == account_id]
-        recent_anomalies = [a for a in recent_anomalies if a.get('account_id') == account_id]
-        cost_suggestions = [c for c in cost_suggestions if c.get('account_id') == account_id]
+        recent_metrics = metrics_table.query(
+            IndexName='account_id-timestamp-index', KeyConditionExpression=Key('account_id').eq(account_id),
+            ScanIndexForward=False, Limit=10).get('Items', [])
+        recent_anomalies = anomalies_table.query(
+            IndexName='account_id-timestamp-index', KeyConditionExpression=Key('account_id').eq(account_id),
+            ScanIndexForward=False, Limit=10).get('Items', [])
+        cost_suggestions = cost_table.query(
+            KeyConditionExpression=Key('account_id').eq(account_id),
+            ScanIndexForward=False, Limit=10).get('Items', [])
+    else:
+        recent_metrics, recent_anomalies, cost_suggestions = [], [], []
 
     unresolved = [a for a in recent_anomalies if not a.get('resolved', False)]
     open_costs = [c for c in cost_suggestions if c.get('status') != 'dismissed']
@@ -369,9 +381,10 @@ def _save_security_event_deduped(resource_id, issue_type, event_label, detail, a
     last_seen on the existing row instead, so repeated scans don't pile up duplicates."""
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     now = datetime.now(timezone.utc).isoformat()
-    existing = table.scan(
-        FilterExpression='instance_id = :r AND event_type = :et AND issue_type = :it AND resolved = :f',
-        ExpressionAttributeValues={':r': resource_id, ':et': 'security', ':it': issue_type, ':f': False}
+    existing = table.query(
+        KeyConditionExpression=Key('instance_id').eq(resource_id),
+        FilterExpression='event_type = :et AND issue_type = :it AND resolved = :f',
+        ExpressionAttributeValues={':et': 'security', ':it': issue_type, ':f': False}
     )
     items = existing.get('Items', [])
     if items:
@@ -404,9 +417,10 @@ def _save_security_event_deduped(resource_id, issue_type, event_label, detail, a
 def _mark_security_event_resolved(resource_id):
     """Mark all unresolved security events for a resource as fixed."""
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
-    result = table.scan(
-        FilterExpression='instance_id = :r AND event_type = :et AND resolved = :f',
-        ExpressionAttributeValues={':r': resource_id, ':et': 'security', ':f': False}
+    result = table.query(
+        KeyConditionExpression=Key('instance_id').eq(resource_id),
+        FilterExpression='event_type = :et AND resolved = :f',
+        ExpressionAttributeValues={':et': 'security', ':f': False}
     )
     for item in result.get('Items', []):
         table.update_item(
@@ -598,10 +612,12 @@ def get_compliance_score(user_id='default-user'):
     # ── Check 3: Unresolved critical anomalies ────────────
     try:
         anomalies_tbl = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
-        all_items = anomalies_tbl.scan().get('Items', [])
+        all_items = anomalies_tbl.query(
+            IndexName='account_id-timestamp-index',
+            KeyConditionExpression=Key('account_id').eq(account_id)
+        ).get('Items', [])
         critical = [i for i in all_items
-                    if i.get('account_id') == account_id
-                    and i.get('severity') == 'critical'
+                    if i.get('severity') == 'critical'
                     and not i.get('resolved', False)]
         if critical:
             pts = min(len(critical) * 10, 25)

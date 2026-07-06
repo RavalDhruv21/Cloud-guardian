@@ -137,46 +137,65 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def main(event=None, context=None):
-    print("Starting metrics collection for all users...")
-    users = get_all_users()
+_QUEUE_URL = os.getenv(
+    'COLLECTOR_QUEUE_URL',
+    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-collector-queue'
+)
 
+
+def collect_for_user(user):
+    """Collect metrics for a single connected account. Raises on failure so the
+    SQS event source retries and, after exhausting retries, routes the message
+    to the DLQ instead of the failure disappearing silently."""
+    role_arn = user.get('role_arn')
+    region = user.get('region', 'us-east-1')
+    account_id = user.get('account_id')
+    user_id = user.get('user_id')
+    print(f"Collecting for user {user_id}, account {account_id}, region {region}")
+
+    ec2 = get_assumed_client('ec2', role_arn, region)
+    cloudwatch = get_assumed_client('cloudwatch', role_arn, region)
+    instance_ids = list_running_instances(ec2)
+    print(f"Found {len(instance_ids)} running instances for {account_id}")
+    all_metrics = []
+    for instance_id in instance_ids:
+        metrics = collect_ec2_metrics(cloudwatch, instance_id)
+        if metrics:
+            all_metrics.append(metrics)
+    if all_metrics:
+        save_metrics_to_dynamodb(all_metrics, account_id=account_id, user_id=user_id)
+    return len(all_metrics)
+
+
+def dispatch_users():
+    """Fan out: enqueue one SQS message per connected account instead of looping
+    through every account serially inside a single (15-minute-capped) invocation."""
+    users = get_all_users()
     if not users:
         print("No connected accounts found")
         return {'statusCode': 200, 'body': json.dumps({'message': 'No accounts to scan'})}
 
-    total_collected = 0
+    sqs = boto3.client('sqs', region_name='us-east-1')
     for user in users:
-        role_arn = user.get('role_arn')
-        region = user.get('region', 'us-east-1')
-        account_id = user.get('account_id')
-        user_id = user.get('user_id')
-        print(f"Collecting for user {user_id}, account {account_id}, region {region}")
-
-        try:
-            ec2 = get_assumed_client('ec2', role_arn, region)
-            cloudwatch = get_assumed_client('cloudwatch', role_arn, region)
-            instance_ids = list_running_instances(ec2)
-            print(f"Found {len(instance_ids)} running instances for {account_id}")
-            all_metrics = []
-            for instance_id in instance_ids:
-                metrics = collect_ec2_metrics(cloudwatch, instance_id)
-                if metrics:
-                    all_metrics.append(metrics)
-            if all_metrics:
-                save_metrics_to_dynamodb(all_metrics, account_id=account_id, user_id=user_id)
-                total_collected += len(all_metrics)
-        except Exception as e:
-            print(f"Error collecting for account {account_id}: {e}")
+        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user, cls=DecimalEncoder))
 
     cleanup_stale_metrics()
     return {
         'statusCode': 200,
-        'body': json.dumps(
-            {'message': f'Collected {total_collected} metrics across {len(users)} accounts'},
-            cls=DecimalEncoder
-        )
+        'body': json.dumps({'message': f'Dispatched {len(users)} accounts to the collector queue'})
     }
+
+
+def main(event=None, context=None):
+    if event and event.get('Records') and event['Records'][0].get('eventSource') == 'aws:sqs':
+        total_collected = 0
+        for record in event['Records']:
+            user = json.loads(record['body'])
+            total_collected += collect_for_user(user)
+        return {'statusCode': 200, 'body': json.dumps({'message': f'Collected {total_collected} metrics'})}
+
+    print("Dispatching metrics collection to the collector queue...")
+    return dispatch_users()
 
 
 if __name__ == '__main__':

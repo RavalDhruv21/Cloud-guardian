@@ -5,6 +5,7 @@ import boto3
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from dotenv import load_dotenv
+from boto3.dynamodb.conditions import Key
 
 load_dotenv()
 
@@ -148,10 +149,10 @@ def send_sns_alert(diagnosis, metric, account_id=None):
 
 def _find_open_anomaly(table, instance_id, summary):
     """Returns the existing unresolved anomaly with this instance_id + summary, if any."""
-    result = table.scan(
-        FilterExpression='instance_id = :iid AND summary = :summary AND resolved = :r',
+    result = table.query(
+        KeyConditionExpression=Key('instance_id').eq(instance_id),
+        FilterExpression='summary = :summary AND resolved = :r',
         ExpressionAttributeValues={
-            ':iid': instance_id,
             ':summary': summary,
             ':r': False,
         }

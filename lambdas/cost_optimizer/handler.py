@@ -245,24 +245,45 @@ def scan_account(role_arn, region, account_id, user_id):
     except Exception as e:
         print(f"EIP scan error: {e}")
 
-def main(event, context):
-    users = get_all_users()
-    print(f"Cost scan for {len(users)} connected accounts")
+_QUEUE_URL = os.getenv(
+    'COST_OPTIMIZER_QUEUE_URL',
+    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-cost-optimizer-queue'
+)
 
+
+def scan_for_user(user):
+    """Scan a single connected account. Raises on failure so the SQS event
+    source retries and, after exhausting retries, routes the message to the
+    DLQ instead of the failure disappearing silently."""
+    role_arn = user.get('role_arn')
+    region = user.get('region', 'us-east-1')
+    account_id = user.get('account_id')
+    user_id = user.get('user_id')
+    if not account_id:
+        return
+    print(f"Scanning account {account_id} for user {user_id}")
+    scan_account(role_arn, region, account_id, user_id)
+
+
+def dispatch_users():
+    """Fan out: enqueue one SQS message per connected account instead of looping
+    through every account serially inside a single (15-minute-capped) invocation."""
+    users = get_all_users()
+    print(f"Cost scan dispatch for {len(users)} connected accounts")
     if not users:
         return {'statusCode': 200, 'body': json.dumps({'message': 'No accounts to scan'})}
 
+    sqs = boto3.client('sqs', region_name='us-east-1')
     for user in users:
-        role_arn = user.get('role_arn')
-        region = user.get('region', 'us-east-1')
-        account_id = user.get('account_id')
-        user_id = user.get('user_id')
-        if not account_id:
-            continue
-        print(f"Scanning account {account_id} for user {user_id}")
-        try:
-            scan_account(role_arn, region, account_id, user_id)
-        except Exception as e:
-            print(f"Error scanning {account_id}: {e}")
+        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user))
 
-    return {'statusCode': 200, 'body': json.dumps({'message': f'Cost scan complete for {len(users)} accounts'})}
+    return {'statusCode': 200, 'body': json.dumps({'message': f'Dispatched {len(users)} accounts to the cost-optimizer queue'})}
+
+
+def main(event, context):
+    if event and event.get('Records') and event['Records'][0].get('eventSource') == 'aws:sqs':
+        for record in event['Records']:
+            scan_for_user(json.loads(record['body']))
+        return {'statusCode': 200, 'body': json.dumps({'message': f"Scanned {len(event['Records'])} account(s)"})}
+
+    return dispatch_users()

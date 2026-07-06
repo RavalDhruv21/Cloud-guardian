@@ -4,6 +4,7 @@ import os
 import requests
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+from boto3.dynamodb.conditions import Key
 
 load_dotenv()
 
@@ -23,18 +24,21 @@ def get_all_users():
 def get_weekly_anomalies(account_id=None):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
-    items = table.scan().get('Items', [])
-    if account_id:
-        items = [i for i in items if i.get('account_id') == account_id]
+    if not account_id:
+        return []
+    items = table.query(
+        IndexName='account_id-timestamp-index',
+        KeyConditionExpression=Key('account_id').eq(account_id)
+    ).get('Items', [])
     days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
     return [i for i in items if i.get('timestamp', '') >= days_ago]
 
 def get_cost_suggestions(account_id=None):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
-    items = table.scan().get('Items', [])
-    if account_id:
-        items = [i for i in items if i.get('account_id') == account_id]
+    if not account_id:
+        return []
+    items = table.query(KeyConditionExpression=Key('account_id').eq(account_id)).get('Items', [])
     return [i for i in items if i.get('status') != 'dismissed']
 
 def generate_report(anomalies, cost_suggestions, account_id, region):
@@ -75,32 +79,51 @@ def send_sns(report_text, account_id):
         Message=report_text
     )
 
-def main(event=None, context=None):
-    print("Generating weekly reports for all users...")
-    users = get_all_users()
+_QUEUE_URL = os.getenv(
+    'REPORT_GENERATOR_QUEUE_URL',
+    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-report-generator-queue'
+)
 
+
+def generate_for_user(user):
+    """Generate + deliver a report for a single connected account. Raises on
+    failure so the SQS event source retries and, after exhausting retries,
+    routes the message to the DLQ instead of the failure disappearing silently."""
+    account_id = user.get('account_id')
+    region = user.get('region', 'us-east-1')
+    user_id = user.get('user_id')
+    if not account_id:
+        return
+    print(f"Generating report for account {account_id} (user {user_id})")
+    anomalies = get_weekly_anomalies(account_id=account_id)
+    suggestions = get_cost_suggestions(account_id=account_id)
+    report = generate_report(anomalies, suggestions, account_id, region)
+    save_to_s3(report, account_id)
+    send_sns(report, account_id)
+
+
+def dispatch_users():
+    """Fan out: enqueue one SQS message per connected account instead of looping
+    through every account serially inside a single (15-minute-capped) invocation."""
+    users = get_all_users()
+    print(f"Report dispatch for {len(users)} connected accounts")
     if not users:
         return {'statusCode': 200, 'body': 'No connected accounts'}
 
-    reports_generated = 0
+    sqs = boto3.client('sqs', region_name='us-east-1')
     for user in users:
-        account_id = user.get('account_id')
-        region = user.get('region', 'us-east-1')
-        user_id = user.get('user_id')
-        if not account_id:
-            continue
-        print(f"Generating report for account {account_id} (user {user_id})")
-        try:
-            anomalies = get_weekly_anomalies(account_id=account_id)
-            suggestions = get_cost_suggestions(account_id=account_id)
-            report = generate_report(anomalies, suggestions, account_id, region)
-            save_to_s3(report, account_id)
-            send_sns(report, account_id)
-            reports_generated += 1
-        except Exception as e:
-            print(f"Error generating report for {account_id}: {e}")
+        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user))
 
-    return {'statusCode': 200, 'body': json.dumps({'reports_generated': reports_generated})}
+    return {'statusCode': 200, 'body': json.dumps({'message': f'Dispatched {len(users)} accounts to the report-generator queue'})}
+
+
+def main(event=None, context=None):
+    if event and event.get('Records') and event['Records'][0].get('eventSource') == 'aws:sqs':
+        for record in event['Records']:
+            generate_for_user(json.loads(record['body']))
+        return {'statusCode': 200, 'body': json.dumps({'reports_generated': len(event['Records'])})}
+
+    return dispatch_users()
 
 if __name__ == '__main__':
     result = main()

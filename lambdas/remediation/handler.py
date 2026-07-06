@@ -4,6 +4,7 @@ import os
 from botocore.exceptions import ClientError
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+from boto3.dynamodb.conditions import Key
 
 load_dotenv()
 
@@ -51,9 +52,10 @@ def save_security_event(event_type, resource_id, detail, account_id=None, user_i
     table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
     now = datetime.now(timezone.utc).isoformat()
 
-    existing = table.scan(
-        FilterExpression='instance_id = :r AND event_type = :et AND issue_type = :it AND resolved = :f',
-        ExpressionAttributeValues={':r': resource_id, ':et': 'security', ':it': issue_type, ':f': False}
+    existing = table.query(
+        KeyConditionExpression=Key('instance_id').eq(resource_id),
+        FilterExpression='event_type = :et AND issue_type = :it AND resolved = :f',
+        ExpressionAttributeValues={':et': 'security', ':it': issue_type, ':f': False}
     )
     items = existing.get('Items', [])
     if items:
@@ -199,27 +201,49 @@ def run_manual_scan_for_user(role_arn, region, account_id, user_id):
         print(f"S3 scan error: {e}")
     return issues
 
+_QUEUE_URL = os.getenv(
+    'REMEDIATION_QUEUE_URL',
+    'https://sqs.us-east-1.amazonaws.com/808715035605/cloud-guardian-remediation-queue'
+)
+
+
+def dispatch_users():
+    """Fan out: enqueue one SQS message per connected account instead of looping
+    through every account serially inside a single (15-minute-capped) invocation."""
+    users = get_all_users()
+    print(f"Manual scan dispatch for {len(users)} accounts")
+    if not users:
+        return {'statusCode': 200, 'body': 'No connected accounts'}
+
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    for user in users:
+        sqs.send_message(QueueUrl=_QUEUE_URL, MessageBody=json.dumps(user))
+
+    return {'statusCode': 200, 'body': f'Dispatched {len(users)} accounts to the remediation queue'}
+
+
 def main(event=None, context=None):
     print("Remediation Lambda triggered")
 
-    if not event or (event.get('source') == 'aws.events' and event.get('detail-type') == 'Scheduled Event'):
-        # Manual scan — run for ALL connected users
-        users = get_all_users()
-        print(f"Manual scan for {len(users)} accounts")
+    if event and event.get('Records') and event['Records'][0].get('eventSource') == 'aws:sqs':
+        # Fan-out worker: process a single connected account. Raises on failure
+        # (e.g. RoleAssumptionError) so the SQS event source retries and, after
+        # exhausting retries, routes the message to the DLQ instead of the
+        # failure disappearing silently.
         total_issues = 0
-        for user in users:
+        for record in event['Records']:
+            user = json.loads(record['body'])
             role_arn = user.get('role_arn')
             region = user.get('region', 'us-east-1')
             account_id = user.get('account_id')
             user_id = user.get('user_id')
             if not account_id:
                 continue
-            try:
-                issues = run_manual_scan_for_user(role_arn, region, account_id, user_id)
-                total_issues += issues
-            except Exception as e:
-                print(f"Error scanning {account_id}: {e}")
-        return {'statusCode': 200, 'body': f'Scanned {len(users)} accounts, {total_issues} issues found'}
+            total_issues += run_manual_scan_for_user(role_arn, region, account_id, user_id)
+        return {'statusCode': 200, 'body': f"Scanned {len(event['Records'])} account(s), {total_issues} issues found"}
+
+    if not event or (event.get('source') == 'aws.events' and event.get('detail-type') == 'Scheduled Event'):
+        return dispatch_users()
 
     # EventBridge CloudTrail event — find which user owns this resource
     detail = event.get('detail', {})
