@@ -51,7 +51,7 @@ function AuthCallbackInner() {
       const email = (claims.email as string) || ''
       const name = (claims.name as string) || (claims.given_name as string) || email.split('@')[0] || 'User'
 
-      document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
+      document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax; Secure`
 
       const { getUserProfile, updateUserProfile } = await import('@/lib/api')
       const data = await getUserProfile()

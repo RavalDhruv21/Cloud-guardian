@@ -64,7 +64,7 @@ export const loginUser = async (email: string, password: string): Promise<any> =
     await fetchAuthSession()
 
     // Set cookie for middleware
-    document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}`
+    document.cookie = `cg_session=true; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax; Secure`
     
     // We will let the login page fetch the profile and handle `cg_user_profile` setting
     return { success: true }

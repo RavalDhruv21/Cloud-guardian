@@ -24,9 +24,11 @@ class DecimalEncoder(json.JSONEncoder):
             return float(obj)
         return super().default(obj)
 
+_ALLOWED_ORIGIN = os.getenv('ALLOWED_ORIGIN', 'https://d1nybctg2u5m4a.cloudfront.net')
+
 def cors_headers():
     return {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': _ALLOWED_ORIGIN,
         'Access-Control-Allow-Headers': 'Content-Type,Authorization',
         'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
         'Content-Type': 'application/json'
