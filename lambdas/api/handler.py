@@ -279,6 +279,109 @@ def get_report_content(report_key, region='us-east-1'):
         return response(500, {'error': str(e)})
 
 # ── POST /agent ────────────────────────────────────────────
+# Tools the model can call. account_id/region are always injected server-side
+# from the caller's verified session — never taken from the model's arguments —
+# so a tool call can never read another account's data.
+
+def _tool_get_instance_metrics(account_id, region, instance_id=None, **_):
+    if not instance_id:
+        return {'error': 'instance_id is required'}
+    table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
+    items = table.query(
+        KeyConditionExpression=Key('instance_id').eq(instance_id),
+        ScanIndexForward=False, Limit=5
+    ).get('Items', [])
+    items = [i for i in items if i.get('account_id') == account_id]
+    return {'metrics': items}
+
+def _tool_list_recent_metrics(account_id, region, limit=10, **_):
+    table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
+    items = table.query(
+        IndexName='account_id-timestamp-index', KeyConditionExpression=Key('account_id').eq(account_id),
+        ScanIndexForward=False, Limit=int(limit) if limit else 10
+    ).get('Items', [])
+    return {'metrics': items}
+
+def _tool_list_open_security_issues(account_id, region, **_):
+    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    items = table.query(
+        IndexName='account_id-timestamp-index', KeyConditionExpression=Key('account_id').eq(account_id),
+        ScanIndexForward=False
+    ).get('Items', [])
+    security = [i for i in items if i.get('event_type') in ('security', 'remediation') and not i.get('resolved', False)]
+    return {'security_issues': security[:20]}
+
+def _tool_list_anomalies(account_id, region, severity=None, resolved=None, **_):
+    table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
+    items = table.query(
+        IndexName='account_id-timestamp-index', KeyConditionExpression=Key('account_id').eq(account_id),
+        ScanIndexForward=False
+    ).get('Items', [])
+    items = [i for i in items if i.get('event_type') not in ('security', 'remediation')]
+    if severity:
+        items = [i for i in items if i.get('severity') == severity]
+    if resolved is not None:
+        items = [i for i in items if i.get('resolved', False) == bool(resolved)]
+    return {'anomalies': items[:20]}
+
+def _tool_list_cost_suggestions(account_id, region, **_):
+    table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
+    items = table.query(
+        KeyConditionExpression=Key('account_id').eq(account_id), ScanIndexForward=False
+    ).get('Items', [])
+    items = [i for i in items if i.get('status') != 'dismissed']
+    savings = round(sum(float(i.get('saving_per_month', 0)) for i in items), 2)
+    return {'cost_suggestions': items, 'total_potential_savings_per_month': savings}
+
+_TOOL_IMPL = {
+    'get_instance_metrics': _tool_get_instance_metrics,
+    'list_recent_metrics': _tool_list_recent_metrics,
+    'list_open_security_issues': _tool_list_open_security_issues,
+    'list_anomalies': _tool_list_anomalies,
+    'list_cost_suggestions': _tool_list_cost_suggestions,
+}
+
+_TOOL_DECLARATIONS = [
+    {
+        'name': 'get_instance_metrics',
+        'description': "Get recent CPU metrics for one specific EC2 instance by its instance ID, e.g. 'i-0abc123'.",
+        'parameters': {
+            'type': 'OBJECT',
+            'properties': {'instance_id': {'type': 'STRING', 'description': 'The EC2 instance ID to look up'}},
+            'required': ['instance_id'],
+        },
+    },
+    {
+        'name': 'list_recent_metrics',
+        'description': 'List the most recent CPU metric snapshots across all EC2 instances in the connected account.',
+        'parameters': {
+            'type': 'OBJECT',
+            'properties': {'limit': {'type': 'INTEGER', 'description': 'Max number of records to return, default 10'}},
+        },
+    },
+    {
+        'name': 'list_open_security_issues',
+        'description': 'List unresolved security findings (e.g. open SSH to the world, public S3 buckets, root account usage) for the connected account.',
+        'parameters': {'type': 'OBJECT', 'properties': {}},
+    },
+    {
+        'name': 'list_anomalies',
+        'description': 'List detected infrastructure anomalies (excluding security findings), optionally filtered by severity or resolved status.',
+        'parameters': {
+            'type': 'OBJECT',
+            'properties': {
+                'severity': {'type': 'STRING', 'enum': ['critical', 'warning', 'info'], 'description': 'Filter by severity'},
+                'resolved': {'type': 'BOOLEAN', 'description': 'Filter by resolved status'},
+            },
+        },
+    },
+    {
+        'name': 'list_cost_suggestions',
+        'description': 'List open (non-dismissed) cost-saving suggestions for the connected account, with total potential monthly savings.',
+        'parameters': {'type': 'OBJECT', 'properties': {}},
+    },
+]
+
 def ask_agent(body):
     import requests as req
     message = body.get('message', '')
@@ -293,41 +396,23 @@ def ask_agent(body):
 
     role_arn, region, account_id = get_user_role_arn(user_id=user_id)
 
-    metrics_table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
-    anomalies_table = dynamodb.Table(os.getenv('DYNAMODB_ANOMALIES_TABLE', 'cloud-guardian-anomalies'))
-    cost_table = dynamodb.Table(os.getenv('DYNAMODB_COST_TABLE', 'cloud-guardian-cost-suggestions'))
-
-    if account_id:
-        recent_metrics = metrics_table.query(
-            IndexName='account_id-timestamp-index', KeyConditionExpression=Key('account_id').eq(account_id),
-            ScanIndexForward=False, Limit=10).get('Items', [])
-        recent_anomalies = anomalies_table.query(
-            IndexName='account_id-timestamp-index', KeyConditionExpression=Key('account_id').eq(account_id),
-            ScanIndexForward=False, Limit=10).get('Items', [])
-        cost_suggestions = cost_table.query(
-            KeyConditionExpression=Key('account_id').eq(account_id),
-            ScanIndexForward=False, Limit=10).get('Items', [])
-    else:
-        recent_metrics, recent_anomalies, cost_suggestions = [], [], []
-
-    unresolved = [a for a in recent_anomalies if not a.get('resolved', False)]
-    open_costs = [c for c in cost_suggestions if c.get('status') != 'dismissed']
-    total_savings = sum(float(c.get('saving_per_month', 0)) for c in open_costs)
+    if not account_id:
+        return response(200, {'reply': "You haven't connected an AWS account yet — connect one first so I can look up real data for you."})
 
     system_prompt = f"""You are Cloud Guardian AI — an expert AWS infrastructure assistant for Cloud Guardian.
-You have real-time data for Account {account_id or 'unknown'} in {region}.
+You are answering questions about Account {account_id} in {region}.
 
-LIVE INFRASTRUCTURE DATA:
-- EC2 metrics (latest): {json.dumps(recent_metrics[:5], cls=DecimalEncoder)[:600]}
-- Unresolved anomalies ({len(unresolved)} total): {json.dumps(unresolved[:5], cls=DecimalEncoder)[:500]}
-- Cost opportunities ({len(open_costs)} found, ${round(total_savings,2)}/mo potential savings): {json.dumps(open_costs[:5], cls=DecimalEncoder)[:400]}
-- Extra context from user: {json.dumps(context)[:1000]}
+You have tools to look up this account's real, current infrastructure data — EC2 metrics, security issues,
+anomalies, and cost suggestions. Call the relevant tool(s) before answering any question about the state of
+the account; never guess or make up numbers. Only call the tools that are actually relevant to what was asked
+— don't fetch everything by default.
+
+Extra context from the user's current screen: {json.dumps(context)[:1000]}
 
 INSTRUCTIONS:
-- Answer questions specifically about THIS account's infrastructure shown above
 - Be direct and actionable — give specific resource IDs when relevant
-- For cost questions, reference the actual saving amounts above
-- For security questions, reference the actual anomalies and events above
+- For cost questions, reference the actual saving amounts returned by your tools
+- For security questions, reference the actual issues returned by your tools
 - Format responses clearly with bullet points where helpful"""
 
     contents = []
@@ -336,34 +421,55 @@ INSTRUCTIONS:
         contents.append({'role': role, 'parts': [{'text': msg.get('content', '')}]})
     contents.append({'role': 'user', 'parts': [{'text': message}]})
 
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}'
+    gemini_response = None
     try:
-        gemini_response = req.post(
-            f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}',
-            headers={'Content-Type': 'application/json'},
-            json={
-                'systemInstruction': {'parts': [{'text': system_prompt}]},
-                'contents': contents,
-                'generationConfig': {'temperature': 0.3, 'maxOutputTokens': 2000}
-            },
-            timeout=25
-        )
-        gemini_response.raise_for_status()
-        data = gemini_response.json()
-        ai_text = (
-            data.get('candidates', [{}])[0]
-                .get('content', {})
-                .get('parts', [{}])[0]
-                .get('text', '')
-            or 'No response generated.'
-        )
-        return response(200, {'reply': ai_text})
+        for _ in range(5):  # cap tool-call round trips so a confused model can't loop forever
+            gemini_response = req.post(
+                url,
+                headers={'Content-Type': 'application/json'},
+                json={
+                    'systemInstruction': {'parts': [{'text': system_prompt}]},
+                    'contents': contents,
+                    'tools': [{'functionDeclarations': _TOOL_DECLARATIONS}],
+                    'generationConfig': {'temperature': 0.3, 'maxOutputTokens': 2000}
+                },
+                timeout=25
+            )
+            gemini_response.raise_for_status()
+            data = gemini_response.json()
+            parts = data.get('candidates', [{}])[0].get('content', {}).get('parts', [])
+            function_calls = [p['functionCall'] for p in parts if 'functionCall' in p]
+
+            if not function_calls:
+                ai_text = next((p['text'] for p in parts if 'text' in p), '') or 'No response generated.'
+                return response(200, {'reply': ai_text})
+
+            contents.append({'role': 'model', 'parts': parts})
+            response_parts = []
+            for fc in function_calls:
+                name = fc.get('name')
+                args = fc.get('args') or {}
+                impl = _TOOL_IMPL.get(name)
+                print(f"Agent tool call: {name}({args})")
+                if not impl:
+                    result = {'error': f'Unknown tool {name}'}
+                else:
+                    try:
+                        result = json.loads(json.dumps(impl(account_id, region, **args), cls=DecimalEncoder))
+                    except Exception as e:
+                        result = {'error': str(e)}
+                response_parts.append({'functionResponse': {'name': name, 'response': result}})
+            contents.append({'role': 'function', 'parts': response_parts})
+
+        return response(200, {'reply': "I wasn't able to finish looking that up — try asking something more specific."})
     except req.exceptions.HTTPError as e:
         error_body = {}
         try:
             error_body = gemini_response.json()
         except Exception:
             pass
-        print(f"Gemini API HTTP error {gemini_response.status_code}: {error_body}")
+        print(f"Gemini API HTTP error {gemini_response.status_code if gemini_response is not None else '?'}: {error_body}")
         return response(502, {'error': f'Gemini API error: {error_body.get("error", {}).get("message", str(e))}'})
     except req.exceptions.Timeout:
         print("Gemini API request timed out")
