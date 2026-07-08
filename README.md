@@ -2,6 +2,16 @@
 
 **Cloud Guardian** is a multi-tenant AWS monitoring, cost-optimization, and auto-remediation platform. It connects to a customer's AWS account via a cross-account IAM role, continuously scans for security misconfigurations and cost waste, and can automatically remediate issues in real time — backed by an AI analyst for natural-language insights.
 
+![Next.js](https://img.shields.io/badge/Next.js-16-black)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
+![AWS Lambda](https://img.shields.io/badge/AWS%20Lambda-FF9900?logo=awslambda&logoColor=white)
+![API Gateway](https://img.shields.io/badge/API%20Gateway-FF4F8B?logo=amazonapigateway&logoColor=white)
+![DynamoDB](https://img.shields.io/badge/DynamoDB-4053D6?logo=amazondynamodb&logoColor=white)
+![Cognito](https://img.shields.io/badge/Cognito-DD344C?logo=amazoncognito&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini%20API-8E75B2?logo=googlegemini&logoColor=white)
+![license](https://img.shields.io/badge/license-MIT-green)
+
 ## Architecture
 
 ![Cloud Guardian Architecture](docs/Architecture.png)
