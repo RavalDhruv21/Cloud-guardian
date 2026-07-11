@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import requests
 import boto3
 from datetime import datetime, timezone, timedelta
@@ -36,19 +37,37 @@ class RoleAssumptionError(Exception):
     closed rather than fall back to the Lambda's own AWS credentials, which
     could act on the wrong AWS account."""
 
+# Assumed-role credentials cached per role_arn, keyed for the life of this
+# warm Lambda execution environment. STS sessions here last 15 minutes, so
+# reusing them avoids re-calling STS on every invocation that hits the same
+# account while the container stays warm.
+_ROLE_CREDENTIALS_CACHE = {}
+_CREDENTIAL_REFRESH_MARGIN_SECONDS = 60
+
 def get_assumed_client(service, role_arn, region):
     if not role_arn:
         return boto3.client(service, region_name=region)
-    try:
-        sts = boto3.client('sts')
-        assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName='CloudGuardianAIAnalyzer')
-        creds = assumed['Credentials']
-        return boto3.client(service, region_name=region,
-            aws_access_key_id=creds['AccessKeyId'],
-            aws_secret_access_key=creds['SecretAccessKey'],
-            aws_session_token=creds['SessionToken'])
-    except Exception as e:
-        raise RoleAssumptionError(f"Role assumption failed for {role_arn}: {e}") from e
+
+    cached = _ROLE_CREDENTIALS_CACHE.get(role_arn)
+    if not cached or cached['expiry'] - time.time() < _CREDENTIAL_REFRESH_MARGIN_SECONDS:
+        try:
+            sts = boto3.client('sts')
+            assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName='CloudGuardianAIAnalyzer')
+            creds = assumed['Credentials']
+            cached = {
+                'access_key_id': creds['AccessKeyId'],
+                'secret_access_key': creds['SecretAccessKey'],
+                'session_token': creds['SessionToken'],
+                'expiry': creds['Expiration'].timestamp(),
+            }
+            _ROLE_CREDENTIALS_CACHE[role_arn] = cached
+        except Exception as e:
+            raise RoleAssumptionError(f"Role assumption failed for {role_arn}: {e}") from e
+
+    return boto3.client(service, region_name=region,
+        aws_access_key_id=cached['access_key_id'],
+        aws_secret_access_key=cached['secret_access_key'],
+        aws_session_token=cached['session_token'])
 
 
 def call_gemini(metrics_data):
