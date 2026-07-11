@@ -41,50 +41,68 @@ def get_assumed_client(service, role_arn, region):
         raise RoleAssumptionError(f"Role assumption failed for {role_arn}: {e}") from e
 
 
-def collect_ec2_metrics(cloudwatch, instance_id):
+def collect_ec2_metrics_batch(cloudwatch, instance_ids):
     """
-    Collect 24h of CloudWatch data for an instance and return an enriched
-    metric object that includes cpu_avg_24h, cpu_max (peak), and
-    sustained_high_minutes (total minutes where avg CPU > 80%).
+    Collect 24h of CloudWatch CPU data for a batch of instances using
+    get_metric_data instead of one get_metric_statistics call per instance.
+    GetMetricData allows up to 500 metric queries per call; we need 2
+    queries (avg + max) per instance, so instances are chunked at 250/call.
 
-    This enriched data is stored to DynamoDB so the DynamoDB stream trigger
-    for ai_analyzer has full context — not just the latest 5-min snapshot.
+    Returns a dict of instance_id -> enriched metric object (cpu_avg_24h,
+    cpu_max peak, sustained_high_minutes), stored to DynamoDB so the
+    DynamoDB stream trigger for ai_analyzer has full context — not just
+    the latest 5-min snapshot. Instances with no datapoints are omitted.
     """
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=24)
 
-    response = cloudwatch.get_metric_statistics(
-        Namespace='AWS/EC2',
-        MetricName='CPUUtilization',
-        Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-        StartTime=start_time,
-        EndTime=end_time,
-        Period=300,   # 5-minute granularity
-        Statistics=['Average', 'Maximum']
-    )
-    datapoints = response.get('Datapoints', [])
-    if not datapoints:
-        return None
+    results = {}
+    chunk_size = 250
+    for i in range(0, len(instance_ids), chunk_size):
+        chunk = instance_ids[i:i + chunk_size]
+        queries = []
+        for idx, instance_id in enumerate(chunk):
+            dims = [{'Name': 'InstanceId', 'Value': instance_id}]
+            metric_stat = {'Metric': {'Namespace': 'AWS/EC2', 'MetricName': 'CPUUtilization', 'Dimensions': dims},
+                            'Period': 300}
+            queries.append({'Id': f'avg{idx}', 'MetricStat': {**metric_stat, 'Stat': 'Average'}, 'ReturnData': True})
+            queries.append({'Id': f'max{idx}', 'MetricStat': {**metric_stat, 'Stat': 'Maximum'}, 'ReturnData': True})
 
-    datapoints.sort(key=lambda x: x['Timestamp'])
-    latest = datapoints[-1]
+        avg_by_idx = {}
+        max_by_idx = {}
+        paginator = cloudwatch.get_paginator('get_metric_data')
+        for page in paginator.paginate(MetricDataQueries=queries, StartTime=start_time, EndTime=end_time,
+                                        ScanBy='TimestampAscending'):
+            for r in page['MetricDataResults']:
+                target = avg_by_idx if r['Id'].startswith('avg') else max_by_idx
+                idx = int(r['Id'][3:])
+                bucket = target.setdefault(idx, {'timestamps': [], 'values': []})
+                bucket['timestamps'].extend(r['Timestamps'])
+                bucket['values'].extend(r['Values'])
 
-    avg_values = [dp['Average'] for dp in datapoints]
-    max_values = [dp['Maximum'] for dp in datapoints]
+        for idx, instance_id in enumerate(chunk):
+            avg_data = avg_by_idx.get(idx)
+            if not avg_data or not avg_data['values']:
+                continue
+            paired = sorted(zip(avg_data['timestamps'], avg_data['values']))
+            avg_values = [v for _, v in paired]
+            latest_ts, latest_avg = paired[-1]
+            max_values = max_by_idx.get(idx, {}).get('values') or avg_values
 
-    # Each datapoint = 5 minutes; count how many had avg CPU > 80%
-    sustained_high_minutes = sum(1 for v in avg_values if v > 80.0) * 5
+            # Each datapoint = 5 minutes; count how many had avg CPU > 80%
+            sustained_high_minutes = sum(1 for v in avg_values if v > 80.0) * 5
 
-    return {
-        'instance_id': instance_id,
-        'cpu_avg': round(latest['Average'], 2),                      # latest 5-min snapshot
-        'cpu_max': round(max(max_values), 2),                        # peak over 24h
-        'cpu_avg_24h': round(sum(avg_values) / len(avg_values), 2),  # 24h mean
-        'sustained_high_minutes': sustained_high_minutes,            # total mins > 80%
-        'datapoint_count': len(datapoints),
-        'timestamp': latest['Timestamp'].isoformat(),
-        'collected_at': datetime.now(timezone.utc).isoformat(),
-    }
+            results[instance_id] = {
+                'instance_id': instance_id,
+                'cpu_avg': round(latest_avg, 2),                          # latest 5-min snapshot
+                'cpu_max': round(max(max_values), 2),                     # peak over 24h
+                'cpu_avg_24h': round(sum(avg_values) / len(avg_values), 2),  # 24h mean
+                'sustained_high_minutes': sustained_high_minutes,         # total mins > 80%
+                'datapoint_count': len(avg_values),
+                'timestamp': latest_ts.isoformat(),
+                'collected_at': datetime.now(timezone.utc).isoformat(),
+            }
+    return results
 
 
 def cleanup_stale_metrics():
@@ -106,27 +124,30 @@ def cleanup_stale_metrics():
 
 
 def list_running_instances(ec2):
-    response = ec2.describe_instances(
-        Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
-    )
-    return [inst['InstanceId'] for r in response['Reservations'] for inst in r['Instances']]
+    paginator = ec2.get_paginator('describe_instances')
+    instance_ids = []
+    for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]):
+        for reservation in page['Reservations']:
+            instance_ids.extend(inst['InstanceId'] for inst in reservation['Instances'])
+    return instance_ids
 
 
 def save_metrics_to_dynamodb(metrics_list, account_id=None, user_id=None):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
-    for metric in metrics_list:
-        # Convert all float fields to Decimal for DynamoDB
-        metric['cpu_avg'] = Decimal(str(metric['cpu_avg']))
-        metric['cpu_max'] = Decimal(str(metric['cpu_max']))
-        metric['cpu_avg_24h'] = Decimal(str(metric['cpu_avg_24h']))
-        metric['sustained_high_minutes'] = Decimal(str(metric['sustained_high_minutes']))
-        metric['datapoint_count'] = Decimal(str(metric['datapoint_count']))
-        if account_id:
-            metric['account_id'] = account_id
-        if user_id:
-            metric['user_id'] = user_id
-        table.put_item(Item=metric)
+    with table.batch_writer() as batch:
+        for metric in metrics_list:
+            # Convert all float fields to Decimal for DynamoDB
+            metric['cpu_avg'] = Decimal(str(metric['cpu_avg']))
+            metric['cpu_max'] = Decimal(str(metric['cpu_max']))
+            metric['cpu_avg_24h'] = Decimal(str(metric['cpu_avg_24h']))
+            metric['sustained_high_minutes'] = Decimal(str(metric['sustained_high_minutes']))
+            metric['datapoint_count'] = Decimal(str(metric['datapoint_count']))
+            if account_id:
+                metric['account_id'] = account_id
+            if user_id:
+                metric['user_id'] = user_id
+            batch.put_item(Item=metric)
     print(f"Saved {len(metrics_list)} metrics for account {account_id}")
 
 
@@ -137,25 +158,48 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+# Accounts with more running instances than this get split into sub-batches
+# and re-queued instead of being processed in one (15-minute-capped) invocation.
+INSTANCE_BATCH_SIZE = 500
+
+
+def _enqueue_instance_batches(user, instance_ids):
+    """Re-queue a large account's instances as several smaller SQS messages on
+    the same collector queue (and DLQ), so no single invocation has to walk
+    thousands of instances before the Lambda timeout kills it."""
+    queue_url = os.environ['COLLECTOR_QUEUE_URL']
+    sqs = boto3.client('sqs', region_name='us-east-1')
+    batch_count = 0
+    for i in range(0, len(instance_ids), INSTANCE_BATCH_SIZE):
+        batch = {**user, 'instance_ids': instance_ids[i:i + INSTANCE_BATCH_SIZE]}
+        sqs.send_message(QueueUrl=queue_url, MessageBody=json.dumps(batch, cls=DecimalEncoder))
+        batch_count += 1
+    print(f"Split {len(instance_ids)} instances for {user.get('account_id')} into {batch_count} batches")
+
+
 def collect_for_user(user):
-    """Collect metrics for a single connected account. Raises on failure so the
-    SQS event source retries and, after exhausting retries, routes the message
-    to the DLQ instead of the failure disappearing silently."""
+    """Collect metrics for a connected account, or for one pre-chunked batch of
+    that account's instances (see _enqueue_instance_batches). Raises on failure
+    so the SQS event source retries and, after exhausting retries, routes the
+    message to the DLQ instead of the failure disappearing silently."""
     role_arn = user.get('role_arn')
     region = user.get('region', 'us-east-1')
     account_id = user.get('account_id')
     user_id = user.get('user_id')
     print(f"Collecting for user {user_id}, account {account_id}, region {region}")
 
-    ec2 = get_assumed_client('ec2', role_arn, region)
+    instance_ids = user.get('instance_ids')
+    if instance_ids is None:
+        ec2 = get_assumed_client('ec2', role_arn, region)
+        instance_ids = list_running_instances(ec2)
+        print(f"Found {len(instance_ids)} running instances for {account_id}")
+
+        if len(instance_ids) > INSTANCE_BATCH_SIZE:
+            _enqueue_instance_batches(user, instance_ids)
+            return 0
+
     cloudwatch = get_assumed_client('cloudwatch', role_arn, region)
-    instance_ids = list_running_instances(ec2)
-    print(f"Found {len(instance_ids)} running instances for {account_id}")
-    all_metrics = []
-    for instance_id in instance_ids:
-        metrics = collect_ec2_metrics(cloudwatch, instance_id)
-        if metrics:
-            all_metrics.append(metrics)
+    all_metrics = list(collect_ec2_metrics_batch(cloudwatch, instance_ids).values())
     if all_metrics:
         save_metrics_to_dynamodb(all_metrics, account_id=account_id, user_id=user_id)
     return len(all_metrics)
