@@ -207,6 +207,8 @@ def collect_for_user(user):
     user_id = user.get('user_id')
     print(f"Collecting for user {user_id}, account {account_id}, region {region}")
 
+    start_time = time.time()
+
     instance_ids = user.get('instance_ids')
     if instance_ids is None:
         ec2 = get_assumed_client('ec2', role_arn, region)
@@ -215,12 +217,17 @@ def collect_for_user(user):
 
         if len(instance_ids) > INSTANCE_BATCH_SIZE:
             _enqueue_instance_batches(user, instance_ids)
+            print(f"Dispatch for account {account_id} took {time.time() - start_time:.2f}s "
+                  f"({len(instance_ids)} instances, split into batches)")
             return 0
 
     cloudwatch = get_assumed_client('cloudwatch', role_arn, region)
     all_metrics = list(collect_ec2_metrics_batch(cloudwatch, instance_ids).values())
     if all_metrics:
         save_metrics_to_dynamodb(all_metrics, account_id=account_id, user_id=user_id)
+
+    print(f"Collection for account {account_id} took {time.time() - start_time:.2f}s "
+          f"({len(instance_ids)} instances scanned, {len(all_metrics)} metrics saved)")
     return len(all_metrics)
 
 
