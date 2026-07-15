@@ -70,6 +70,28 @@ def get_assumed_client(service, role_arn, region):
         aws_session_token=cached['session_token'])
 
 
+# Warm-container cache — a given instance's ambiguous-metric diagnosis rarely
+# changes between consecutive collector cycles, so reuse it for a while instead
+# of re-asking Gemini every invocation. Doesn't survive cold starts, but cuts
+# real request volume (unlike retry/backoff, which just delays the same calls).
+_GEMINI_CACHE = {}
+GEMINI_CACHE_TTL_SECONDS = 900  # 15 minutes
+
+
+def _cache_get(instance_id):
+    cached = _GEMINI_CACHE.get(instance_id)
+    if not cached:
+        return None
+    checked_at, diagnosis = cached
+    if time.time() - checked_at > GEMINI_CACHE_TTL_SECONDS:
+        return None
+    return diagnosis
+
+
+def _cache_set(instance_id, diagnosis):
+    _GEMINI_CACHE[instance_id] = (time.time(), diagnosis)
+
+
 def call_gemini(metrics_data):
     """
     Send enriched 24h metrics context to Gemini for anomaly analysis.
@@ -120,6 +142,63 @@ Respond ONLY in this exact JSON format (no markdown, no extra text):
         raise
 
     # Strip markdown fences if model ignores the instruction
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("```")[1]
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:]
+    return json.loads(raw_text.strip())
+
+
+def call_gemini_batch(metrics_list):
+    """
+    Same analysis as call_gemini, but for multiple instances in a single
+    request — this is what actually cuts Gemini request volume, since the
+    free-tier quota is shared across every Lambda invocation and every
+    instance being analyzed. Returns {instance_id: diagnosis}.
+    """
+    if not metrics_list:
+        return {}
+
+    prompt = f"""You are an AWS infrastructure monitoring expert.
+Analyze EACH of the following EC2 instances' metrics (collected over the last 24 hours) and detect anomalies independently, per instance.
+
+CRITICAL RULES (apply per-instance):
+1. Only flag "High CPU" if the CURRENT cpu_avg > 75%.
+2. Do NOT flag an anomaly based purely on past spikes (e.g., high cpu_max or past sustained_high_minutes) if the current cpu_avg is normal (<= 75%).
+3. Consider cpu_avg_24h (overall trend) alongside cpu_avg (latest snapshot).
+4. If current cpu_avg is normal (<= 75%), set anomaly_detected to false.
+5. If cpu_avg < 5% consistently, flag as "Underutilized Instance" with severity "low".
+6. Avoid false positives — only flag real current issues.
+
+Instances (keyed by instance_id):
+{json.dumps({m['instance_id']: m for m in metrics_list}, indent=2)}
+
+Respond ONLY with a JSON object keyed by instance_id (no markdown, no extra text). Every instance_id above must appear as a key. Each value must have this exact shape:
+{{"anomaly_detected": true or false, "severity": "low" or "medium" or "high" or "critical",
+"summary": "one line summary", "likely_cause": "cause", "recommended_action": "action",
+"estimated_monthly_cost_impact": "cost impact"}}"""
+
+    headers = {"Content-Type": "application/json"}
+    body = {
+        "systemInstruction": {
+            "parts": [{"text": "You are an AWS infrastructure expert. Always respond in valid JSON only. No markdown fences."}]
+        },
+        "contents": [
+            {"parts": [{"text": prompt}]}
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 500 * len(metrics_list)
+        }
+    }
+    response = requests.post(GEMINI_API_URL, headers=headers, json=body)
+    response.raise_for_status()
+    try:
+        raw_text = response.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+    except Exception as e:
+        print(f"Error parsing Gemini batch response: {e}, {response.text}")
+        raise
+
     if raw_text.startswith("```"):
         raw_text = raw_text.split("```")[1]
         if raw_text.startswith("json"):
@@ -295,20 +374,46 @@ def parse_stream_record(record):
     }
 
 
-def analyze_metric(metric):
+def analyze_metrics(metrics):
     """
-    Run deterministic check first; fall back to Gemini if no clear breach.
-    Returns (diagnosis, source) where source is 'deterministic' or 'gemini'.
+    Analyzes a batch of metrics from one invocation: deterministic checks run
+    per-metric (free), and every remaining ambiguous metric is resolved with
+    at most one batched Gemini call (after checking the warm-container cache),
+    instead of one Gemini call per metric.
+    Returns [(metric, diagnosis, source), ...] — source is 'deterministic',
+    'gemini-cached', or 'gemini'. Metrics with no diagnosis (batch response
+    missing that instance_id) are omitted.
     """
-    # 1. Deterministic fast-path — always catches clear threshold breaches
-    fast_diagnosis = deterministic_check(metric)
-    if fast_diagnosis:
-        print(f"  Deterministic anomaly detected for {metric['instance_id']} — skipping Gemini")
-        return fast_diagnosis, 'deterministic'
+    results = [None] * len(metrics)
+    to_query = []  # (index, metric) needing a fresh Gemini call
 
-    # 2. AI analysis for ambiguous cases
-    diagnosis = call_gemini(metric)
-    return diagnosis, 'gemini'
+    for i, metric in enumerate(metrics):
+        fast_diagnosis = deterministic_check(metric)
+        if fast_diagnosis:
+            print(f"  Deterministic anomaly detected for {metric['instance_id']} — skipping Gemini")
+            results[i] = (metric, fast_diagnosis, 'deterministic')
+            continue
+
+        cached = _cache_get(metric['instance_id'])
+        if cached:
+            print(f"  Reusing cached Gemini diagnosis for {metric['instance_id']} (< {GEMINI_CACHE_TTL_SECONDS}s old)")
+            results[i] = (metric, cached, 'gemini-cached')
+            continue
+
+        to_query.append((i, metric))
+
+    if to_query:
+        print(f"  Batching {len(to_query)} ambiguous instance(s) into a single Gemini call")
+        batch_diagnoses = call_gemini_batch([m for _, m in to_query])
+        for i, metric in to_query:
+            diagnosis = batch_diagnoses.get(metric['instance_id'])
+            if diagnosis is None:
+                print(f"  No diagnosis returned for {metric['instance_id']}, skipping")
+                continue
+            _cache_set(metric['instance_id'], diagnosis)
+            results[i] = (metric, diagnosis, 'gemini')
+
+    return [r for r in results if r is not None]
 
 
 def main(event=None, context=None):
@@ -317,20 +422,20 @@ def main(event=None, context=None):
 
     # ── DynamoDB stream path ───────────────────────────────────────────────────
     if event and 'Records' in event:
+        metrics = []
         for record in event['Records']:
             metric = parse_stream_record(record)
-            if not metric or not metric['instance_id']:
-                continue
+            if metric and metric['instance_id']:
+                metrics.append(metric)
+                print(f"Analyzing stream record: {metric['instance_id']} "
+                      f"(cpu_avg={metric['cpu_avg']}%, cpu_max={metric['cpu_max']}%, "
+                      f"sustained={metric['sustained_high_minutes']}min)")
 
-            account_id = metric.get('account_id')
-            user_id = metric.get('user_id')
-            print(f"Analyzing stream record: {metric['instance_id']} "
-                  f"(cpu_avg={metric['cpu_avg']}%, cpu_max={metric['cpu_max']}%, "
-                  f"sustained={metric['sustained_high_minutes']}min)")
-
-            try:
-                diagnosis, source = analyze_metric(metric)
-                print(f"  [{source}] anomaly_detected={diagnosis['anomaly_detected']}, "
+        try:
+            for metric, diagnosis, source in analyze_metrics(metrics):
+                account_id = metric.get('account_id')
+                user_id = metric.get('user_id')
+                print(f"  [{source}] {metric['instance_id']}: anomaly_detected={diagnosis['anomaly_detected']}, "
                       f"severity={diagnosis.get('severity')}")
                 if diagnosis['anomaly_detected']:
                     saved = save_anomaly(metric['instance_id'], metric, diagnosis,
@@ -338,8 +443,8 @@ def main(event=None, context=None):
                     if saved:
                         send_sns_alert(diagnosis, metric, account_id=account_id)
                 results.append({'instance_id': metric['instance_id'], 'diagnosis': diagnosis, 'source': source})
-            except Exception as e:
-                print(f"Error analyzing {metric['instance_id']}: {e}")
+        except Exception as e:
+            print(f"Error analyzing stream batch: {e}")
 
     # ── Manual / scheduled invocation — scan all connected users ──────────────
     else:
@@ -359,30 +464,27 @@ def main(event=None, context=None):
             try:
                 live_metrics = get_live_metrics(role_arn, region, account_id)
                 print(f"  Found {len(live_metrics)} instances to analyze")
-
                 for metric in live_metrics:
                     print(f"  Instance {metric['instance_id']}: "
                           f"cpu_avg={metric['cpu_avg']}%, cpu_max={metric['cpu_max']}%, "
                           f"cpu_avg_24h={metric['cpu_avg_24h']}%, "
                           f"sustained={metric['sustained_high_minutes']}min")
-                    try:
-                        diagnosis, source = analyze_metric(metric)
-                        print(f"    [{source}] anomaly_detected={diagnosis['anomaly_detected']}, "
-                              f"severity={diagnosis.get('severity')}")
-                        if diagnosis['anomaly_detected']:
-                            saved = save_anomaly(metric['instance_id'], metric, diagnosis,
-                                                 account_id=account_id, user_id=user_id)
-                            if saved:
-                                send_sns_alert(diagnosis, metric, account_id=account_id)
-                        results.append({
-                            'instance_id': metric['instance_id'],
-                            'diagnosis': diagnosis,
-                            'source': source
-                        })
-                    except Exception as e:
-                        print(f"Error analyzing {metric['instance_id']}: {e}")
+
+                for metric, diagnosis, source in analyze_metrics(live_metrics):
+                    print(f"    [{source}] {metric['instance_id']}: anomaly_detected={diagnosis['anomaly_detected']}, "
+                          f"severity={diagnosis.get('severity')}")
+                    if diagnosis['anomaly_detected']:
+                        saved = save_anomaly(metric['instance_id'], metric, diagnosis,
+                                             account_id=account_id, user_id=user_id)
+                        if saved:
+                            send_sns_alert(diagnosis, metric, account_id=account_id)
+                    results.append({
+                        'instance_id': metric['instance_id'],
+                        'diagnosis': diagnosis,
+                        'source': source
+                    })
             except Exception as e:
-                print(f"Error fetching metrics for {account_id}: {e}")
+                print(f"Error fetching/analyzing metrics for {account_id}: {e}")
 
     return {'statusCode': 200, 'body': json.dumps({'results': results}, default=str)}
 
