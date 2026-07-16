@@ -10,3 +10,5 @@ node_modules/
 cdk.out/
 response.json
 trust-policy.json
+ml/data/
+ml/*.joblib

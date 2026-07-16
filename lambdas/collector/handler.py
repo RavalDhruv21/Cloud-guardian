@@ -2,6 +2,7 @@ import boto3
 import json
 import decimal
 import os
+import statistics
 import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -111,12 +112,25 @@ def collect_ec2_metrics_batch(cloudwatch, instance_ids):
             # Each datapoint = 5 minutes; count how many had avg CPU > 80%
             sustained_high_minutes = sum(1 for v in avg_values if v > 80.0) * 5
 
+            # Raw stats for the ai_analyzer anomaly model — trained on
+            # cpu_avg/cpu_max/cpu_avg_24h/sustained_high_minutes plus these
+            # three (z-score and short-vs-long-window deviation are derived
+            # from cpu_std_24h/cpu_avg_1h at inference time; see
+            # ai_analyzer/handler.py's build_feature_vector).
+            cpu_std_24h = statistics.pstdev(avg_values) if len(avg_values) > 1 else 0.0
+            recent_window = avg_values[-12:]  # last 1h at 5-min granularity
+            cpu_avg_1h = sum(recent_window) / len(recent_window)
+            rate_of_change = avg_values[-1] - avg_values[-2] if len(avg_values) > 1 else 0.0
+
             results[instance_id] = {
                 'instance_id': instance_id,
                 'cpu_avg': round(latest_avg, 2),                          # latest 5-min snapshot
                 'cpu_max': round(max(max_values), 2),                     # peak over 24h
                 'cpu_avg_24h': round(sum(avg_values) / len(avg_values), 2),  # 24h mean
                 'sustained_high_minutes': sustained_high_minutes,         # total mins > 80%
+                'cpu_std_24h': round(cpu_std_24h, 4),
+                'cpu_avg_1h': round(cpu_avg_1h, 2),
+                'rate_of_change': round(rate_of_change, 2),
                 'datapoint_count': len(avg_values),
                 'timestamp': latest_ts.isoformat(),
                 'collected_at': datetime.now(timezone.utc).isoformat(),
@@ -161,6 +175,9 @@ def save_metrics_to_dynamodb(metrics_list, account_id=None, user_id=None):
             metric['cpu_max'] = Decimal(str(metric['cpu_max']))
             metric['cpu_avg_24h'] = Decimal(str(metric['cpu_avg_24h']))
             metric['sustained_high_minutes'] = Decimal(str(metric['sustained_high_minutes']))
+            metric['cpu_std_24h'] = Decimal(str(metric['cpu_std_24h']))
+            metric['cpu_avg_1h'] = Decimal(str(metric['cpu_avg_1h']))
+            metric['rate_of_change'] = Decimal(str(metric['rate_of_change']))
             metric['datapoint_count'] = Decimal(str(metric['datapoint_count']))
             if account_id:
                 metric['account_id'] = account_id

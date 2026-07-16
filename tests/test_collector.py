@@ -53,6 +53,9 @@ def test_save_metrics_to_dynamodb():
         'cpu_max': 67.1,
         'cpu_avg_24h': 40.0,
         'sustained_high_minutes': 0,
+        'cpu_std_24h': 5.3,
+        'cpu_avg_1h': 44.0,
+        'rate_of_change': 1.2,
         'datapoint_count': 288,
         'timestamp': '2025-01-01T00:00:00',
         'collected_at': '2025-01-01T00:00:00'

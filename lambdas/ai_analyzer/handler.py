@@ -1,5 +1,7 @@
 import json
+import math
 import os
+import statistics
 import time
 import requests
 import boto3
@@ -7,6 +9,11 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from dotenv import load_dotenv
 from boto3.dynamodb.conditions import Key
+
+try:
+    import ml_model  # Lambda's zip root has handler.py and ml_model.py as siblings
+except ImportError:
+    from lambdas.ai_analyzer import ml_model  # local/test imports go through the package
 
 load_dotenv()
 
@@ -338,12 +345,22 @@ def get_live_metrics(role_arn, region, account_id):
             # Each datapoint covers 5 minutes; count how many had avg > 80%
             sustained_high_minutes = sum(1 for v in avg_values if v > 80.0) * 5
 
+            # Mirrors collector/handler.py's enrichment — same raw stats the
+            # anomaly model was trained on.
+            cpu_std_24h = statistics.pstdev(avg_values) if len(avg_values) > 1 else 0.0
+            recent_window = avg_values[-12:]  # last 1h at 5-min granularity
+            cpu_avg_1h = sum(recent_window) / len(recent_window)
+            rate_of_change = avg_values[-1] - avg_values[-2] if len(avg_values) > 1 else 0.0
+
             metrics.append({
                 'instance_id': instance_id,
                 'cpu_avg': round(latest['Average'], 2),           # latest 5-min snapshot
                 'cpu_max': round(max(max_values), 2),             # peak over 24h
                 'cpu_avg_24h': round(sum(avg_values) / len(avg_values), 2),  # 24h mean
                 'sustained_high_minutes': sustained_high_minutes, # total mins > 80%
+                'cpu_std_24h': round(cpu_std_24h, 4),
+                'cpu_avg_1h': round(cpu_avg_1h, 2),
+                'rate_of_change': round(rate_of_change, 2),
                 'datapoint_count': len(datapoints),
                 'timestamp': latest['Timestamp'].isoformat(),
                 'account_id': account_id,
@@ -367,22 +384,83 @@ def parse_stream_record(record):
         'cpu_max': float(new_image.get('cpu_max', {}).get('N', 0)),
         'cpu_avg_24h': float(new_image.get('cpu_avg_24h', {}).get('N', 0)),
         'sustained_high_minutes': int(float(new_image.get('sustained_high_minutes', {}).get('N', 0))),
+        'cpu_std_24h': float(new_image.get('cpu_std_24h', {}).get('N', 0)),
+        'cpu_avg_1h': float(new_image.get('cpu_avg_1h', {}).get('N', new_image.get('cpu_avg', {}).get('N', 0))),
+        'rate_of_change': float(new_image.get('rate_of_change', {}).get('N', 0)),
         'datapoint_count': int(float(new_image.get('datapoint_count', {}).get('N', 0))),
+        'timestamp': new_image.get('timestamp', {}).get('S', None),
         'account_id': new_image.get('account_id', {}).get('S', None),
         'user_id': new_image.get('user_id', {}).get('S', None),
         'region': new_image.get('region', {}).get('S', 'us-east-1'),
     }
 
 
+ML_FEATURE_EPS = 1e-6
+
+
+def build_feature_vector(metric):
+    """
+    Builds the feature vector in the exact order the anomaly model was
+    trained on (see ml/train_anomaly_model.py's FEATURE_COLUMNS): z-score and
+    short-vs-long-window deviation are derived here from the raw stats
+    collector/get_live_metrics persist (cpu_std_24h, cpu_avg_1h), mirroring
+    how the training script derives them from NAB's rolling windows.
+    """
+    cpu_avg = metric.get('cpu_avg', 0.0)
+    cpu_max = metric.get('cpu_max', 0.0)
+    cpu_avg_24h = metric.get('cpu_avg_24h', 0.0)
+    sustained_high_minutes = metric.get('sustained_high_minutes', 0)
+    rate_of_change = metric.get('rate_of_change', 0.0)
+    cpu_std_24h = metric.get('cpu_std_24h', 0.0)
+    cpu_avg_1h = metric.get('cpu_avg_1h', cpu_avg)
+
+    z_score_24h = (cpu_avg - cpu_avg_24h) / (cpu_std_24h + ML_FEATURE_EPS)
+    short_vs_long_shift = (cpu_avg_1h - cpu_avg_24h) / (cpu_std_24h + ML_FEATURE_EPS)
+
+    if metric.get('timestamp'):
+        ts = datetime.fromisoformat(metric['timestamp'])
+    else:
+        ts = datetime.now(timezone.utc)
+    hour_frac = ts.hour + ts.minute / 60.0
+    hour_sin = math.sin(2 * math.pi * hour_frac / 24)
+    hour_cos = math.cos(2 * math.pi * hour_frac / 24)
+
+    return [cpu_avg, cpu_max, cpu_avg_24h, sustained_high_minutes, rate_of_change,
+            z_score_24h, short_vs_long_shift, hour_sin, hour_cos]
+
+
+def ml_check(metric):
+    """
+    Runs the exported Isolation Forest on a metric that already passed the
+    deterministic check. If the model is confident nothing's wrong, returns a
+    'normal' diagnosis immediately — skipping Gemini entirely. If it looks
+    anomalous, returns None so the metric still falls through to Gemini,
+    which is what produces the human-readable cause/action/cost writeup the
+    model itself can't generate.
+    """
+    features = build_feature_vector(metric)
+    if not ml_model.is_anomaly(features):
+        return {
+            'anomaly_detected': False,
+            'severity': 'none',
+            'summary': 'No anomaly detected (ML model)',
+            'likely_cause': 'n/a',
+            'recommended_action': 'n/a',
+            'estimated_monthly_cost_impact': 'n/a',
+        }
+    return None
+
+
 def analyze_metrics(metrics):
     """
-    Analyzes a batch of metrics from one invocation: deterministic checks run
-    per-metric (free), and every remaining ambiguous metric is resolved with
-    at most one batched Gemini call (after checking the warm-container cache),
-    instead of one Gemini call per metric.
+    Analyzes a batch of metrics from one invocation in three stages, cheapest
+    first: deterministic checks (free), then the local ML model (free, no
+    network call), and only what's left after both goes to Gemini — batched
+    into a single call (after checking the warm-container cache) instead of
+    one call per metric.
     Returns [(metric, diagnosis, source), ...] — source is 'deterministic',
-    'gemini-cached', or 'gemini'. Metrics with no diagnosis (batch response
-    missing that instance_id) are omitted.
+    'ml', 'gemini-cached', or 'gemini'. Metrics with no diagnosis (batch
+    response missing that instance_id) are omitted.
     """
     results = [None] * len(metrics)
     to_query = []  # (index, metric) needing a fresh Gemini call
@@ -392,6 +470,12 @@ def analyze_metrics(metrics):
         if fast_diagnosis:
             print(f"  Deterministic anomaly detected for {metric['instance_id']} — skipping Gemini")
             results[i] = (metric, fast_diagnosis, 'deterministic')
+            continue
+
+        ml_diagnosis = ml_check(metric)
+        if ml_diagnosis:
+            print(f"  ML model confident {metric['instance_id']} is normal — skipping Gemini")
+            results[i] = (metric, ml_diagnosis, 'ml')
             continue
 
         cached = _cache_get(metric['instance_id'])
