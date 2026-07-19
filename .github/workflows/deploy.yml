@@ -53,6 +53,7 @@ jobs:
           deploy_lambda remediation cloud-guardian-remediation
           deploy_lambda report_generator cloud-guardian-report-generator
           deploy_lambda api cloud-guardian-api
+          deploy_lambda analytics_export cloud-guardian-analytics-export
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
