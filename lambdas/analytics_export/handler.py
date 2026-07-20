@@ -90,6 +90,34 @@ def run_export():
     }
 
 
+EXPORT_FILES = {
+    'cost-suggestions': 'cost_suggestions.csv',
+    'misconfig-findings': 'misconfig_findings.csv',
+}
+
+
+def api_handler(event, context):
+    """API Gateway proxy handler — serves the latest exported CSVs over HTTPS
+    (behind an API-key-protected REST API) so Power BI's Web connector can
+    pull them without needing S3 request signing."""
+    file_param = (event.get('pathParameters') or {}).get('file')
+    s3_key_name = EXPORT_FILES.get(file_param)
+    if not s3_key_name:
+        return {'statusCode': 404, 'body': 'Unknown export file'}
+
+    bucket = os.environ['S3_BUCKET_NAME']
+    prefix = os.getenv('ANALYTICS_EXPORT_PREFIX', 'exports/analytics')
+    s3 = boto3.client('s3', region_name='us-east-1')
+    obj = s3.get_object(Bucket=bucket, Key=f"{prefix}/{s3_key_name}")
+    csv_body = obj['Body'].read().decode('utf-8')
+
+    return {
+        'statusCode': 200,
+        'headers': {'Content-Type': 'text/csv'},
+        'body': csv_body,
+    }
+
+
 def main(event=None, context=None):
     result = run_export()
     return {'statusCode': 200, 'body': result}
