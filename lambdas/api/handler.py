@@ -859,7 +859,8 @@ def connect_account(body):
         )
         return response(200, {'message': 'Account connected successfully', 'account_id': account_id})
     except Exception as e:
-        return response(400, {'error': f'Could not assume role: {str(e)}'})
+        print(f"connect_account: role assumption failed for {role_arn}: {e}")
+        return response(400, {'error': 'Could not assume the provided role. Please verify the Role ARN and that the trust policy allows Cloud Guardian to assume it.'})
 
 # ── POST /accounts/disconnect ───────────────────────────────
 def disconnect_account(body):
