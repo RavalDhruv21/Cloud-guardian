@@ -16,4 +16,4 @@ foreach ($rule in $rules) {
 }
 
 Write-Host "`nDone. All scheduled scans are paused. Event-driven rules (CloudTrail-based) are left untouched."
-Write-Host "Run start-guardian.ps1 before your interview/demo to resume normal operation."
+Write-Host "Run .\scripts\start-guardian.ps1 for restart"
