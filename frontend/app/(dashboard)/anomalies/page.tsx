@@ -165,6 +165,17 @@ export default function AnomaliesPage() {
                       </div>
                     </div>
 
+                    {anomaly.additional_recommendations?.length > 0 && (
+                      <div className="rounded-xl p-4 mb-5" style={{background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)'}}>
+                        <div className="text-xs font-semibold uppercase tracking-wider mb-2 text-white/40">Suggestions</div>
+                        <ul className="text-sm text-white/80 leading-relaxed list-disc list-inside space-y-1">
+                          {anomaly.additional_recommendations.map((rec: string, idx: number) => (
+                            <li key={idx}>{rec}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
                     <div className="flex items-center gap-3">
                       {!anomaly.resolved && (
                         <button

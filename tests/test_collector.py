@@ -1,6 +1,7 @@
 import pytest
 import boto3
 import json
+from datetime import datetime, timezone, timedelta
 from moto import mock_aws
 from unittest.mock import patch
 from decimal import Decimal
@@ -12,7 +13,10 @@ load_dotenv()
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from lambdas.collector import handler
-from lambdas.collector.handler import list_running_instances, collect_ec2_metrics_batch, save_metrics_to_dynamodb
+from lambdas.collector.handler import (
+    list_running_instances, collect_ec2_metrics_batch, save_metrics_to_dynamodb,
+    discover_cwagent_metrics, collect_cwagent_metrics,
+)
 
 @mock_aws
 def test_list_running_instances_empty():
@@ -58,7 +62,13 @@ def test_save_metrics_to_dynamodb():
         'rate_of_change': 1.2,
         'datapoint_count': 288,
         'timestamp': '2025-01-01T00:00:00',
-        'collected_at': '2025-01-01T00:00:00'
+        'collected_at': '2025-01-01T00:00:00',
+        # Optional network/disk/status-check fields — should convert to
+        # Decimal alongside the base fields without needing to be named
+        # explicitly in save_metrics_to_dynamodb.
+        'network_in_avg': 123456.0,
+        'ebs_write_ops_avg': 42.0,
+        'status_check_failed': 0,
     }]
 
     save_metrics_to_dynamodb(sample)
@@ -70,6 +80,51 @@ def test_save_metrics_to_dynamodb():
         'timestamp': '2025-01-01T00:00:00'
     })
     assert response['Item']['cpu_avg'] == Decimal('45.2')
+    assert response['Item']['network_in_avg'] == Decimal('123456.0')
+    assert response['Item']['status_check_failed'] == Decimal('0')
+
+
+@mock_aws
+def test_discover_cwagent_metrics_empty_when_agent_not_installed():
+    """Should gracefully return no matches when no CWAgent metrics exist —
+    the common case, since most instances don't have the agent installed."""
+    cloudwatch = boto3.client('cloudwatch', region_name='us-east-1')
+    result = discover_cwagent_metrics(cloudwatch, ['i-fake123'])
+    assert result == {}
+
+
+@mock_aws
+def test_collect_cwagent_metrics_no_instances_returns_none():
+    cloudwatch = boto3.client('cloudwatch', region_name='us-east-1')
+    assert collect_cwagent_metrics(cloudwatch, {}) is None
+
+
+@mock_aws
+def test_collect_ec2_metrics_batch_includes_extra_metrics_when_present():
+    """When CloudWatch has network/disk/status-check datapoints (not just
+    CPU), collect_ec2_metrics_batch should enrich them the same way as CPU."""
+    cloudwatch = boto3.client('cloudwatch', region_name='us-east-1')
+    instance_id = 'i-extrametrics'
+    # 10 minutes in the past — moto's get_metric_data excludes datapoints
+    # exactly at EndTime, and collect_ec2_metrics_batch's EndTime is "now".
+    timestamp = datetime.now(timezone.utc) - timedelta(minutes=10)
+    dims = [{'Name': 'InstanceId', 'Value': instance_id}]
+
+    for metric_name, value in [
+        ('CPUUtilization', 42.0), ('NetworkIn', 1_000_000.0), ('NetworkOut', 500_000.0),
+        ('EBSReadOps', 10.0), ('EBSWriteOps', 20.0), ('StatusCheckFailed', 0.0),
+    ]:
+        cloudwatch.put_metric_data(Namespace='AWS/EC2', MetricData=[{
+            'MetricName': metric_name, 'Dimensions': dims, 'Timestamp': timestamp, 'Value': value,
+        }])
+
+    result = collect_ec2_metrics_batch(cloudwatch, [instance_id])
+    assert instance_id in result
+    metric = result[instance_id]
+    assert metric['cpu_avg'] == 42.0
+    assert 'network_in_avg' in metric
+    assert 'ebs_write_ops_avg' in metric
+    assert metric['status_check_failed'] == 0
 
 
 @mock_aws

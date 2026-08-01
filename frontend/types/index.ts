@@ -5,6 +5,13 @@ export interface EC2Metric {
   timestamp: string
   collected_at: string
   account_id?: string
+  network_in_avg?: number
+  network_out_avg?: number
+  ebs_read_ops_avg?: number
+  ebs_write_ops_avg?: number
+  status_check_failed?: number
+  mem_used_percent?: number
+  disk_used_percent?: number
 }
 
 export interface Anomaly {
@@ -17,6 +24,7 @@ export interface Anomaly {
   cost_impact: string
   resolved: boolean
   account_id?: string
+  additional_recommendations?: string[]
 }
 
 export interface CostSuggestion {

@@ -12,8 +12,9 @@ from boto3.dynamodb.conditions import Key
 
 try:
     import ml_model  # Lambda's zip root has handler.py and ml_model.py as siblings
+    import recommendations
 except ImportError:
-    from lambdas.ai_analyzer import ml_model  # local/test imports go through the package
+    from lambdas.ai_analyzer import ml_model, recommendations  # local/test imports go through the package
 
 load_dotenv()
 
@@ -26,6 +27,10 @@ SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN")
 CPU_AVG_CRITICAL_THRESHOLD = 80.0
 CPU_MAX_CRITICAL_THRESHOLD = 90.0
 SUSTAINED_MINUTES_THRESHOLD = 15  # minutes above 80% to count as sustained spike
+MEM_CRITICAL_THRESHOLD = 90.0
+MEM_HIGH_THRESHOLD = 80.0
+DISK_CRITICAL_THRESHOLD = 90.0
+DISK_HIGH_THRESHOLD = 80.0
 
 
 def get_all_users():
@@ -109,7 +114,9 @@ def call_gemini(metrics_data):
       - sustained_high_minutes : total minutes cpu_avg > 80% in last 24h
     """
     prompt = f"""You are an AWS infrastructure monitoring expert.
-Analyze the following EC2 metrics collected over the last 24 hours and detect anomalies.
+Analyze the following EC2 metrics collected over the last 24 hours and detect anomalies. Metrics may include CPU,
+network (network_in_avg/network_out_avg), disk (ebs_read_ops_avg/ebs_write_ops_avg), status_check_failed, and
+(if the CloudWatch Agent is installed) mem_used_percent/disk_used_percent.
 
 CRITICAL RULES:
 1. Only flag "High CPU" if the CURRENT cpu_avg > 75%.
@@ -117,7 +124,9 @@ CRITICAL RULES:
 3. Consider cpu_avg_24h (overall trend) alongside cpu_avg (latest snapshot).
 4. If current cpu_avg is normal (<= 75%), set anomaly_detected to false.
 5. If cpu_avg < 5% consistently, flag as "Underutilized Instance" with severity "low".
-6. Avoid false positives — only flag real current issues.
+6. Do NOT treat every metric as a CPU problem — a high network_in/network_out with normal CPU is a network/traffic issue, not a CPU issue; a high ebs_read_ops/ebs_write_ops with normal CPU is a disk I/O issue.
+7. status_check_failed=1 (or status_check_failed_24h_max > 0) is always a real anomaly regardless of other metrics.
+8. Avoid false positives — only flag real current issues.
 
 Metrics data:
 {json.dumps(metrics_data, indent=2)}
@@ -167,7 +176,9 @@ def call_gemini_batch(metrics_list):
         return {}
 
     prompt = f"""You are an AWS infrastructure monitoring expert.
-Analyze EACH of the following EC2 instances' metrics (collected over the last 24 hours) and detect anomalies independently, per instance.
+Analyze EACH of the following EC2 instances' metrics (collected over the last 24 hours) and detect anomalies independently, per instance. Metrics may
+include CPU, network (network_in_avg/network_out_avg), disk (ebs_read_ops_avg/ebs_write_ops_avg), status_check_failed, and (if the CloudWatch Agent is
+installed) mem_used_percent/disk_used_percent.
 
 CRITICAL RULES (apply per-instance):
 1. Only flag "High CPU" if the CURRENT cpu_avg > 75%.
@@ -175,7 +186,9 @@ CRITICAL RULES (apply per-instance):
 3. Consider cpu_avg_24h (overall trend) alongside cpu_avg (latest snapshot).
 4. If current cpu_avg is normal (<= 75%), set anomaly_detected to false.
 5. If cpu_avg < 5% consistently, flag as "Underutilized Instance" with severity "low".
-6. Avoid false positives — only flag real current issues.
+6. Do NOT treat every metric as a CPU problem — a high network_in/network_out with normal CPU is a network/traffic issue, not a CPU issue; a high ebs_read_ops/ebs_write_ops with normal CPU is a disk I/O issue.
+7. status_check_failed=1 (or status_check_failed_24h_max > 0) is always a real anomaly regardless of other metrics.
+8. Avoid false positives — only flag real current issues.
 
 Instances (keyed by instance_id):
 {json.dumps({m['instance_id']: m for m in metrics_list}, indent=2)}
@@ -216,10 +229,22 @@ Respond ONLY with a JSON object keyed by instance_id (no markdown, no extra text
 def deterministic_check(metric):
     """
     Safety net: if thresholds are clearly breached, return a diagnosis
-    without relying on the AI. Returns None if no clear breach.
+    without relying on the AI. Returns None if no clear breach. Checks
+    instance status first (an instance failing its own AWS health check is
+    unambiguous and shouldn't wait on CPU/memory/disk thresholds), then CPU,
+    then memory/disk usage (CWAgent-only — skipped when not installed).
     """
-    cpu_avg = metric.get('cpu_avg', 0)
+    if metric.get('status_check_failed'):
+        return {
+            'anomaly_detected': True,
+            'severity': 'critical',
+            'summary': 'Instance is failing its AWS status check',
+            'likely_cause': 'Underlying hardware, network, or OS-level failure',
+            'recommended_action': 'Investigate instance reachability; consider stopping/starting or replacing the instance',
+            'estimated_monthly_cost_impact': 'Possible downtime; evaluate instance replacement',
+        }
 
+    cpu_avg = metric.get('cpu_avg', 0)
     if cpu_avg > CPU_AVG_CRITICAL_THRESHOLD:
         severity = 'critical' if cpu_avg > 90 else 'high'
         return {
@@ -230,6 +255,31 @@ def deterministic_check(metric):
             'recommended_action': 'Review running processes and consider scaling up the instance',
             'estimated_monthly_cost_impact': 'Possible performance degradation; evaluate instance upgrade',
         }
+
+    mem_used_percent = metric.get('mem_used_percent')
+    if mem_used_percent is not None and mem_used_percent > MEM_HIGH_THRESHOLD:
+        severity = 'critical' if mem_used_percent > MEM_CRITICAL_THRESHOLD else 'high'
+        return {
+            'anomaly_detected': True,
+            'severity': severity,
+            'summary': f'Memory usage is critically high at {mem_used_percent}%',
+            'likely_cause': 'Memory leak or undersized instance for current workload',
+            'recommended_action': 'Investigate memory usage per process; consider right-sizing the instance',
+            'estimated_monthly_cost_impact': 'Possible OOM-related downtime; evaluate instance upgrade',
+        }
+
+    disk_used_percent = metric.get('disk_used_percent')
+    if disk_used_percent is not None and disk_used_percent > DISK_HIGH_THRESHOLD:
+        severity = 'critical' if disk_used_percent > DISK_CRITICAL_THRESHOLD else 'high'
+        return {
+            'anomaly_detected': True,
+            'severity': severity,
+            'summary': f'Disk usage is critically high at {disk_used_percent}%',
+            'likely_cause': 'Log growth, temp file accumulation, or undersized volume',
+            'recommended_action': 'Clean up disk space or expand the volume',
+            'estimated_monthly_cost_impact': 'Risk of disk-full failures; evaluate volume resize',
+        }
+
     return None
 
 
@@ -238,6 +288,24 @@ def send_sns_alert(diagnosis, metric, account_id=None):
         return
     sns = boto3.client('sns', region_name='us-east-1')
     subject = f"[{diagnosis['severity'].upper()}] Cloud Guardian Alert — {metric['instance_id']}"
+
+    extra_lines = []
+    if 'network_in_avg' in metric or 'network_out_avg' in metric:
+        extra_lines.append(f"Network: in={metric.get('network_in_avg', 'N/A')} out={metric.get('network_out_avg', 'N/A')} bytes/5min")
+    if 'ebs_read_ops_avg' in metric or 'ebs_write_ops_avg' in metric:
+        extra_lines.append(f"EBS ops: read={metric.get('ebs_read_ops_avg', 'N/A')} write={metric.get('ebs_write_ops_avg', 'N/A')} /5min")
+    if metric.get('status_check_failed'):
+        extra_lines.append("Status check: FAILED")
+    if 'mem_used_percent' in metric:
+        extra_lines.append(f"Memory: {metric['mem_used_percent']}%")
+    if 'disk_used_percent' in metric:
+        extra_lines.append(f"Disk: {metric['disk_used_percent']}%")
+
+    recommendations_block = ""
+    if diagnosis.get('additional_recommendations'):
+        recommendations_block = "\nRecommendations:\n" + "\n".join(
+            f"- {r}" for r in diagnosis['additional_recommendations'])
+
     message = (
         f"Cloud Guardian Anomaly Detected\n"
         f"Account: {account_id or 'unknown'} | Instance: {metric['instance_id']}\n"
@@ -245,8 +313,10 @@ def send_sns_alert(diagnosis, metric, account_id=None):
         f"Peak CPU: {metric.get('cpu_max', 'N/A')}% | "
         f"24h Avg: {metric.get('cpu_avg_24h', 'N/A')}% | "
         f"Sustained high: {metric.get('sustained_high_minutes', 0)} min\n"
-        f"Cause: {diagnosis['likely_cause']}\n"
-        f"Action: {diagnosis['recommended_action']}\n"
+        + ("\n".join(extra_lines) + "\n" if extra_lines else "")
+        + f"Cause: {diagnosis['likely_cause']}\n"
+        f"Action: {diagnosis['recommended_action']}"
+        f"{recommendations_block}\n"
         f"Cost: {diagnosis['estimated_monthly_cost_impact']}"
     )
     sns.publish(TopicArn=SNS_TOPIC_ARN, Subject=subject, Message=message)
@@ -297,6 +367,8 @@ def save_anomaly(instance_id, metrics, diagnosis, account_id=None, user_id=None)
         'resolved': False,
         'last_seen': now,
     }
+    if diagnosis.get('additional_recommendations'):
+        item['additional_recommendations'] = diagnosis['additional_recommendations']
     if account_id:
         item['account_id'] = account_id
     if user_id:
@@ -305,10 +377,55 @@ def save_anomaly(instance_id, metrics, diagnosis, account_id=None, user_id=None)
     return True
 
 
+# Same non-CPU metrics collector/handler.py collects, mirrored here for the
+# manual/scheduled full-account scan path (get_live_metrics loops per
+# instance already, so this is just more get_metric_statistics calls per
+# instance rather than a batched get_metric_data query).
+EXTRA_METRICS = ['NetworkIn', 'NetworkOut', 'EBSReadOps', 'EBSWriteOps']
+EXTRA_METRIC_KEYS = {
+    'NetworkIn': 'network_in', 'NetworkOut': 'network_out',
+    'EBSReadOps': 'ebs_read_ops', 'EBSWriteOps': 'ebs_write_ops',
+}
+
+
+def _enrich_series(prefix, avg_values, max_values):
+    """Same avg/max/24h/std/1h/rate-of-change enrichment as
+    collector/handler.py's _enrich_series, generalized across metrics."""
+    std_24h = statistics.pstdev(avg_values) if len(avg_values) > 1 else 0.0
+    recent_window = avg_values[-12:]  # last 1h at 5-min granularity
+    avg_1h = sum(recent_window) / len(recent_window)
+    rate_of_change = avg_values[-1] - avg_values[-2] if len(avg_values) > 1 else 0.0
+    return {
+        f'{prefix}_avg': round(avg_values[-1], 2),
+        f'{prefix}_max': round(max(max_values or avg_values), 2),
+        f'{prefix}_avg_24h': round(sum(avg_values) / len(avg_values), 2),
+        f'{prefix}_std_24h': round(std_24h, 4),
+        f'{prefix}_avg_1h': round(avg_1h, 2),
+        f'{prefix}_rate_of_change': round(rate_of_change, 2),
+    }
+
+
+def _get_metric_avg_max(cloudwatch, namespace, metric_name, instance_id, start_time, end_time):
+    result = cloudwatch.get_metric_statistics(
+        Namespace=namespace,
+        MetricName=metric_name,
+        Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+        StartTime=start_time,
+        EndTime=end_time,
+        Period=300,
+        Statistics=['Average', 'Maximum']
+    )
+    datapoints = sorted(result.get('Datapoints', []), key=lambda x: x['Timestamp'])
+    if not datapoints:
+        return None, None
+    return [dp['Average'] for dp in datapoints], [dp['Maximum'] for dp in datapoints]
+
+
 def get_live_metrics(role_arn, region, account_id):
     """
     Fetch 24h CloudWatch data per instance and return enriched metric objects
-    that include sustained_high_minutes, cpu_avg_24h, and cpu_max over the full window.
+    that include sustained_high_minutes, cpu_avg_24h, and cpu_max over the full
+    window, plus the same enrichment for network/disk and status_check_failed.
     """
     ec2 = get_assumed_client('ec2', role_arn, region)
     cloudwatch = get_assumed_client('cloudwatch', role_arn, region)
@@ -324,48 +441,53 @@ def get_live_metrics(role_arn, region, account_id):
     for reservation in instances_resp['Reservations']:
         for inst in reservation['Instances']:
             instance_id = inst['InstanceId']
-            cw_result = cloudwatch.get_metric_statistics(
-                Namespace='AWS/EC2',
-                MetricName='CPUUtilization',
-                Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-                StartTime=start_time,
-                EndTime=end_time,
-                Period=300,   # 5-minute granularity
-                Statistics=['Average', 'Maximum']
-            )
-            datapoints = cw_result.get('Datapoints', [])
-            if not datapoints:
+            avg_values, max_values = _get_metric_avg_max(
+                cloudwatch, 'AWS/EC2', 'CPUUtilization', instance_id, start_time, end_time)
+            if avg_values is None:
                 continue
 
-            datapoints.sort(key=lambda x: x['Timestamp'])
-            avg_values = [dp['Average'] for dp in datapoints]
-            max_values = [dp['Maximum'] for dp in datapoints]
-            latest = datapoints[-1]
+            cw_result = cloudwatch.get_metric_statistics(
+                Namespace='AWS/EC2', MetricName='CPUUtilization',
+                Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+                StartTime=start_time, EndTime=end_time, Period=300,
+                Statistics=['Average', 'Maximum']
+            )
+            latest_ts = max(dp['Timestamp'] for dp in cw_result['Datapoints'])
 
             # Each datapoint covers 5 minutes; count how many had avg > 80%
             sustained_high_minutes = sum(1 for v in avg_values if v > 80.0) * 5
+            cpu_enriched = _enrich_series('cpu', avg_values, max_values)
 
-            # Mirrors collector/handler.py's enrichment — same raw stats the
-            # anomaly model was trained on.
-            cpu_std_24h = statistics.pstdev(avg_values) if len(avg_values) > 1 else 0.0
-            recent_window = avg_values[-12:]  # last 1h at 5-min granularity
-            cpu_avg_1h = sum(recent_window) / len(recent_window)
-            rate_of_change = avg_values[-1] - avg_values[-2] if len(avg_values) > 1 else 0.0
-
-            metrics.append({
+            metric = {
                 'instance_id': instance_id,
-                'cpu_avg': round(latest['Average'], 2),           # latest 5-min snapshot
-                'cpu_max': round(max(max_values), 2),             # peak over 24h
-                'cpu_avg_24h': round(sum(avg_values) / len(avg_values), 2),  # 24h mean
-                'sustained_high_minutes': sustained_high_minutes, # total mins > 80%
-                'cpu_std_24h': round(cpu_std_24h, 4),
-                'cpu_avg_1h': round(cpu_avg_1h, 2),
-                'rate_of_change': round(rate_of_change, 2),
-                'datapoint_count': len(datapoints),
-                'timestamp': latest['Timestamp'].isoformat(),
+                'cpu_avg': cpu_enriched['cpu_avg'],
+                'cpu_max': cpu_enriched['cpu_max'],
+                'cpu_avg_24h': cpu_enriched['cpu_avg_24h'],
+                'sustained_high_minutes': sustained_high_minutes,
+                'cpu_std_24h': cpu_enriched['cpu_std_24h'],
+                'cpu_avg_1h': cpu_enriched['cpu_avg_1h'],
+                'rate_of_change': cpu_enriched['cpu_rate_of_change'],
+                'datapoint_count': len(avg_values),
+                'timestamp': latest_ts.isoformat(),
                 'account_id': account_id,
                 'region': region,
-            })
+            }
+
+            for metric_name in EXTRA_METRICS:
+                prefix = EXTRA_METRIC_KEYS[metric_name]
+                extra_avg, extra_max = _get_metric_avg_max(
+                    cloudwatch, 'AWS/EC2', metric_name, instance_id, start_time, end_time)
+                if extra_avg is None:
+                    continue
+                metric.update(_enrich_series(prefix, extra_avg, extra_max))
+
+            status_avg, status_max = _get_metric_avg_max(
+                cloudwatch, 'AWS/EC2', 'StatusCheckFailed', instance_id, start_time, end_time)
+            if status_avg is not None:
+                metric['status_check_failed'] = int(status_avg[-1])
+                metric['status_check_failed_24h_max'] = int(max(status_max))
+
+            metrics.append(metric)
 
     return metrics
 
@@ -378,24 +500,58 @@ def parse_stream_record(record):
     if record.get('eventName') not in ['INSERT', 'MODIFY']:
         return None
     new_image = record['dynamodb'].get('NewImage', {})
-    return {
+
+    def num(name, default=0):
+        if name not in new_image:
+            return default
+        return float(new_image[name]['N'])
+
+    metric = {
         'instance_id': new_image.get('instance_id', {}).get('S', ''),
-        'cpu_avg': float(new_image.get('cpu_avg', {}).get('N', 0)),
-        'cpu_max': float(new_image.get('cpu_max', {}).get('N', 0)),
-        'cpu_avg_24h': float(new_image.get('cpu_avg_24h', {}).get('N', 0)),
-        'sustained_high_minutes': int(float(new_image.get('sustained_high_minutes', {}).get('N', 0))),
-        'cpu_std_24h': float(new_image.get('cpu_std_24h', {}).get('N', 0)),
-        'cpu_avg_1h': float(new_image.get('cpu_avg_1h', {}).get('N', new_image.get('cpu_avg', {}).get('N', 0))),
-        'rate_of_change': float(new_image.get('rate_of_change', {}).get('N', 0)),
-        'datapoint_count': int(float(new_image.get('datapoint_count', {}).get('N', 0))),
+        'cpu_avg': num('cpu_avg'),
+        'cpu_max': num('cpu_max'),
+        'cpu_avg_24h': num('cpu_avg_24h'),
+        'sustained_high_minutes': int(num('sustained_high_minutes')),
+        'cpu_std_24h': num('cpu_std_24h'),
+        'cpu_avg_1h': num('cpu_avg_1h', num('cpu_avg')),
+        'rate_of_change': num('rate_of_change'),
+        'datapoint_count': int(num('datapoint_count')),
         'timestamp': new_image.get('timestamp', {}).get('S', None),
         'account_id': new_image.get('account_id', {}).get('S', None),
         'user_id': new_image.get('user_id', {}).get('S', None),
         'region': new_image.get('region', {}).get('S', 'us-east-1'),
     }
 
+    # Optional fields — old records predating this feature won't have them,
+    # and instances without EBS/CWAgent data won't either, so they're only
+    # included when present rather than defaulted to 0 (which would look
+    # like "confirmed zero traffic" instead of "unknown").
+    for prefix in ('network_in', 'network_out', 'ebs_read_ops', 'ebs_write_ops'):
+        for suffix in ('avg', 'max', 'avg_24h', 'std_24h', 'avg_1h', 'rate_of_change'):
+            key = f'{prefix}_{suffix}'
+            if key in new_image:
+                metric[key] = num(key)
+    if 'status_check_failed' in new_image:
+        metric['status_check_failed'] = int(num('status_check_failed'))
+    if 'status_check_failed_24h_max' in new_image:
+        metric['status_check_failed_24h_max'] = int(num('status_check_failed_24h_max'))
+    if 'mem_used_percent' in new_image:
+        metric['mem_used_percent'] = num('mem_used_percent')
+    if 'disk_used_percent' in new_image:
+        metric['disk_used_percent'] = num('disk_used_percent')
+
+    return metric
+
 
 ML_FEATURE_EPS = 1e-6
+
+
+# Non-CPU metrics fed into the trained model — each contributes its current
+# level (avg) plus a z-score vs its own 24h baseline, mirroring cpu's
+# z_score_24h. Missing values (older records, or metrics AWS didn't return
+# for a given instance) default to "looks normal" (avg 0, z-score 0) rather
+# than raising, same as cpu's existing defaults.
+EXTRA_ML_METRICS = ['network_in', 'network_out', 'ebs_read_ops', 'ebs_write_ops']
 
 
 def build_feature_vector(metric):
@@ -404,7 +560,9 @@ def build_feature_vector(metric):
     trained on (see ml/train_anomaly_model.py's FEATURE_COLUMNS): z-score and
     short-vs-long-window deviation are derived here from the raw stats
     collector/get_live_metrics persist (cpu_std_24h, cpu_avg_1h), mirroring
-    how the training script derives them from NAB's rolling windows.
+    how the training script derives them from NAB's rolling windows. Network/
+    disk/status-check features extend the same pattern so anomalies aren't
+    detected on CPU alone.
     """
     cpu_avg = metric.get('cpu_avg', 0.0)
     cpu_max = metric.get('cpu_max', 0.0)
@@ -425,8 +583,19 @@ def build_feature_vector(metric):
     hour_sin = math.sin(2 * math.pi * hour_frac / 24)
     hour_cos = math.cos(2 * math.pi * hour_frac / 24)
 
-    return [cpu_avg, cpu_max, cpu_avg_24h, sustained_high_minutes, rate_of_change,
-            z_score_24h, short_vs_long_shift, hour_sin, hour_cos]
+    features = [cpu_avg, cpu_max, cpu_avg_24h, sustained_high_minutes, rate_of_change,
+                z_score_24h, short_vs_long_shift, hour_sin, hour_cos]
+
+    for prefix in EXTRA_ML_METRICS:
+        avg = metric.get(f'{prefix}_avg', 0.0)
+        avg_24h = metric.get(f'{prefix}_avg_24h', avg)
+        std_24h = metric.get(f'{prefix}_std_24h', 0.0)
+        features.append(avg)
+        features.append((avg - avg_24h) / (std_24h + ML_FEATURE_EPS))
+
+    features.append(metric.get('status_check_failed', 0))
+
+    return features
 
 
 def ml_check(metric):
@@ -497,7 +666,13 @@ def analyze_metrics(metrics):
             _cache_set(metric['instance_id'], diagnosis)
             results[i] = (metric, diagnosis, 'gemini')
 
-    return [r for r in results if r is not None]
+    final = [r for r in results if r is not None]
+    for metric, diagnosis, _source in final:
+        if diagnosis.get('anomaly_detected'):
+            extra = recommendations.derive_recommendations(metric)
+            if extra:
+                diagnosis['additional_recommendations'] = extra
+    return final
 
 
 def main(event=None, context=None):
