@@ -1,49 +1,42 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getMetrics, getAnomalies, getCostSuggestions, getSecurityEvents, getComplianceScore, getCostForecast } from '@/lib/api'
+import { useMetrics, useAnomalies, useCostSuggestions, useSecurityEvents, useComplianceScore, useCostForecast } from '@/lib/queries'
+
+// Refetch on the same 60s cadence the old setInterval polling used, but as
+// a background revalidation — cached data still renders immediately instead
+// of blocking behind a spinner on every visit.
+const POLL = { refetchInterval: 60_000 }
 
 export default function DashboardPage() {
   const router = useRouter()
-  const [metrics, setMetrics] = useState<any[]>([])
-  const [anomalies, setAnomalies] = useState<any[]>([])
-  const [costs, setCosts] = useState<any[]>([])
-  const [security, setSecurity] = useState<any[]>([])
-  const [compliance, setCompliance] = useState<any>(null)
-  const [forecast, setForecast] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
   const [awsConnected, setAwsConnected] = useState(false)
 
   useEffect(() => {
     setAwsConnected(localStorage.getItem('aws_connected') === 'true')
-    const fetchAll = async () => {
-      try {
-        const [m, a, c, s, comp, fc] = await Promise.all([
-          getMetrics(),
-          getAnomalies(),
-          getCostSuggestions(),
-          getSecurityEvents(),
-          getComplianceScore(),
-          getCostForecast(),
-        ])
-        setMetrics(m.metrics || [])
-        setAnomalies(a.anomalies || [])
-        setCosts(c.suggestions || [])
-        setSecurity(s.events || [])
-        setCompliance(comp)
-        setForecast(fc)
-      } catch (err) {
-        console.error('Failed to fetch data:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchAll()
-    const interval = setInterval(fetchAll, 60000)
-    return () => clearInterval(interval)
   }, [])
 
-  const unresolvedAnomalies = anomalies.filter(a => !a.resolved)
+  const metricsQuery = useMetrics(POLL)
+  const anomaliesQuery = useAnomalies(undefined, POLL)
+  const costsQuery = useCostSuggestions(POLL)
+  const securityQuery = useSecurityEvents(POLL)
+  const complianceQuery = useComplianceScore(POLL)
+  const forecastQuery = useCostForecast(POLL)
+
+  const metrics: any[] = metricsQuery.data?.metrics || []
+  const anomalies: any[] = anomaliesQuery.data?.anomalies || []
+  const costs: any[] = costsQuery.data?.suggestions || []
+  const security: any[] = securityQuery.data?.events || []
+  const compliance = complianceQuery.data
+  const forecast = forecastQuery.data
+
+  // Only block on the very first load of each query — once any of them has
+  // data cached from a previous visit, background refetches shouldn't hide
+  // the page behind a spinner again.
+  const loading = [metricsQuery, anomaliesQuery, costsQuery, securityQuery, complianceQuery, forecastQuery]
+    .some(q => q.isLoading)
+
+  const unresolvedAnomalies = anomalies.filter((a: any) => !a.resolved)
   const totalSavings = costs.reduce((sum: number, c: any) => {
     const amt = parseFloat(c.estimated_saving?.replace('$','').replace('/mo','') || '0')
     return sum + amt

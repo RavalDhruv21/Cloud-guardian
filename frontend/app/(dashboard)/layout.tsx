@@ -2,7 +2,8 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { getAnomalies, getConnectedAccount } from '@/lib/api'
+import { getConnectedAccount } from '@/lib/api'
+import { useAnomalies } from '@/lib/queries'
 import { getRegion, setRegion } from '@/lib/region'
 import { logoutUser, getCurrentUser, switchAccount } from '@/lib/auth'
 
@@ -71,7 +72,6 @@ export default function DashboardLayout({
   const pathname = usePathname()
   const router = useRouter()
   const [accountLabel] = useState('My AWS Account')
-  const [unresolvedCount, setUnresolvedCount] = useState(0)
   const [currentRegion, setCurrentRegion] = useState('us-east-1')
   const [profile, setProfile] = useState({ name: 'User', email: '', aws_account_id: '' })
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
@@ -89,25 +89,22 @@ export default function DashboardLayout({
     }
   }, [])
 
-  // Fetch unresolved anomalies count — re-runs on auth, region change, or account switch
+  // Unresolved anomalies count for the sidebar badge — shares the same
+  // cache entry as the Anomalies page, so resolving one there updates this
+  // badge immediately too, instead of only on the next region/profile event.
+  const anomaliesQuery = useAnomalies(undefined, { enabled: authChecked })
+  const unresolvedCount = (anomaliesQuery.data?.anomalies || []).filter((a: any) => !a.resolved).length
+
   useEffect(() => {
     if (!authChecked) return
-    const fetchCount = async () => {
-      try {
-        const data = await getAnomalies()
-        const unresolved = (data.anomalies || []).filter((a: any) => !a.resolved).length
-        setUnresolvedCount(unresolved)
-      } catch {
-        setUnresolvedCount(0)
-      }
-    }
-    fetchCount()
-    window.addEventListener('region-changed', fetchCount)
-    window.addEventListener('profile-updated', fetchCount)
+    const refetch = () => anomaliesQuery.refetch()
+    window.addEventListener('region-changed', refetch)
+    window.addEventListener('profile-updated', refetch)
     return () => {
-      window.removeEventListener('region-changed', fetchCount)
-      window.removeEventListener('profile-updated', fetchCount)
+      window.removeEventListener('region-changed', refetch)
+      window.removeEventListener('profile-updated', refetch)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authChecked])
 
   // Load region

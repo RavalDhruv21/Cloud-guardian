@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getAuditLogs } from '@/lib/api'
+import { useAuditLogs } from '@/lib/queries'
 
 const serviceColor = (service: string) => {
   if (service.includes('lambda')) return { bg: 'rgba(96,165,250,0.15)', color: '#60A5FA' }
@@ -24,31 +24,20 @@ const actionIcon = (action: string) => {
 }
 
 export default function AuditLogPage() {
-  const [logs, setLogs] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
-  const [error, setError] = useState('')
+
+  const query = useAuditLogs()
+  const logs: any[] = query.data?.logs || []
+  const loading = query.isLoading
+  const error = query.isError ? 'Failed to load audit logs' : ''
+  const fetchLogs = () => query.refetch()
 
   useEffect(() => {
-    fetchLogs()
     window.addEventListener('region-changed', fetchLogs)
     return () => window.removeEventListener('region-changed', fetchLogs)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const fetchLogs = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await getAuditLogs()
-      setLogs(data.logs || [])
-    } catch (err) {
-      setError('Failed to load audit logs')
-      setLogs([])
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const filtered = logs.filter(log => {
     if (filter !== 'all' && !log.service?.toLowerCase().includes(filter)) return false

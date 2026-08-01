@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAnomalies, resolveAnomaly } from '@/lib/api'
+import { useAnomalies, useResolveAnomaly } from '@/lib/queries'
 
 const severityColor = (s: string) => ({
   critical: { bg: 'rgba(248,113,113,0.15)', color: '#F87171', dot: '#F87171' },
@@ -12,37 +12,16 @@ const severityColor = (s: string) => ({
 
 export default function AnomaliesPage() {
   const router = useRouter()
-  const [anomalies, setAnomalies] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
 
-  useEffect(() => {
-    fetchAnomalies()
-  }, [])
+  const anomaliesQuery = useAnomalies()
+  const anomalies: any[] = anomaliesQuery.data?.anomalies || []
+  const loading = anomaliesQuery.isLoading
 
-  const fetchAnomalies = async () => {
-    try {
-      const data = await getAnomalies()
-      setAnomalies(data.anomalies || [])
-    } catch (err) {
-      console.error('Failed to fetch anomalies:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleResolve = async (instanceId: string, timestamp: string) => {
-    try {
-      await resolveAnomaly(instanceId, timestamp)
-      setAnomalies(prev => prev.map(a =>
-        a.instance_id === instanceId && a.timestamp === timestamp
-          ? {...a, resolved: true}
-          : a
-      ))
-    } catch (err) {
-      console.error('Failed to resolve:', err)
-    }
+  const resolveMutation = useResolveAnomaly()
+  const handleResolve = (instanceId: string, timestamp: string) => {
+    resolveMutation.mutate({ instanceId, timestamp })
   }
 
   const filtered = anomalies.filter(a => {

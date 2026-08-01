@@ -304,7 +304,7 @@ BASE_NUMERIC_FIELDS = (
 )
 
 
-def save_metrics_to_dynamodb(metrics_list, account_id=None, user_id=None):
+def save_metrics_to_dynamodb(metrics_list, account_id=None, user_id=None, region=None):
     dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
     table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
     with table.batch_writer() as batch:
@@ -320,6 +320,12 @@ def save_metrics_to_dynamodb(metrics_list, account_id=None, user_id=None):
                 metric['account_id'] = account_id
             if user_id:
                 metric['user_id'] = user_id
+            # The API's /live-metrics and /metrics endpoints filter saved
+            # rows by region — without this they'd silently default every
+            # row to 'us-east-1' and any other-region account would see no
+            # metrics at all.
+            if region:
+                metric['region'] = region
             batch.put_item(Item=metric)
     print(f"Saved {len(metrics_list)} metrics for account {account_id}")
 
@@ -385,7 +391,7 @@ def collect_for_user(user):
 
     all_metrics = list(metrics_by_instance.values())
     if all_metrics:
-        save_metrics_to_dynamodb(all_metrics, account_id=account_id, user_id=user_id)
+        save_metrics_to_dynamodb(all_metrics, account_id=account_id, user_id=user_id, region=region)
 
     print(f"Collection for account {account_id} took {time.time() - start_time:.2f}s "
           f"({len(instance_ids)} instances scanned, {len(all_metrics)} metrics saved)")

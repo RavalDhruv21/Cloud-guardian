@@ -1,43 +1,32 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getSecurityEvents, runSecurityScan, fixSecurityIssue } from '@/lib/api'
+import { useSecurityEvents, useRunSecurityScan, useFixSecurityIssue } from '@/lib/queries'
+
+// This page polled every 5s unconditionally before — kept the same cadence
+// here since auto-remediation events are meant to show up near-instantly,
+// but it's now a background revalidation instead of a blocking refetch.
+const EVENTS_POLL = { refetchInterval: 5000 }
 
 export default function SecurityPage() {
   const router = useRouter()
-  const [events, setEvents] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<any>(null)
   const [fixingId, setFixingId] = useState<string | null>(null)
   const [tab, setTab] = useState<'all' | 'auto-fixed' | 'review'>('all')
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>
+  const eventsQuery = useSecurityEvents(EVENTS_POLL)
+  const events: any[] = eventsQuery.data?.events || []
+  const loading = eventsQuery.isLoading
 
-    const fetchEvents = async (isInitial = false) => {
-      try {
-        const data = await getSecurityEvents()
-        setEvents(data.events || [])
-      } catch (err) {
-        console.error('Failed to fetch security events:', err)
-      } finally {
-        if (isInitial) setLoading(false)
-      }
-    }
-
-    fetchEvents(true)
-    interval = setInterval(() => fetchEvents(false), 5000)
-    return () => clearInterval(interval)
-  }, [])
+  const fixMutation = useFixSecurityIssue()
+  const scanMutation = useRunSecurityScan()
+  const scanning = scanMutation.isPending
 
   const handleFixIssue = async (issueType: string, resourceId: string, eventKey: string) => {
     setFixingId(eventKey)
     try {
-      await fixSecurityIssue(issueType, resourceId)
-      const data = await getSecurityEvents()
-      setEvents(data.events || [])
+      await fixMutation.mutateAsync({ issueType, resourceId })
     } catch (err) {
       console.error('Fix failed:', err)
     } finally {
@@ -46,19 +35,13 @@ export default function SecurityPage() {
   }
 
   const handleScanNow = async () => {
-    setScanning(true)
     setScanResult(null)
     try {
-      const result = await runSecurityScan()
+      const result = await scanMutation.mutateAsync()
       setScanResult(result)
-      // Refresh events immediately after scan
-      const data = await getSecurityEvents()
-      setEvents(data.events || [])
     } catch (err) {
       console.error('Security scan failed:', err)
       setScanResult({ error: 'Scan failed — check console' })
-    } finally {
-      setScanning(false)
     }
   }
 

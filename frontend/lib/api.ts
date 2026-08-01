@@ -19,19 +19,33 @@ const isTokenExpired = (token: string): boolean => {
   }
 }
 
+// In-memory cache for the resolved token — every axios request otherwise
+// re-ran the full Amplify/localStorage/refresh lookup below on every call,
+// which is unnecessary async work when the token we already have is still
+// valid. Cleared implicitly on logout/switch-account since those always do
+// a full page navigation (window.location.href), which resets this module.
+let _cachedToken: string | null = null
+
 export const getToken = async (): Promise<string> => {
+  if (_cachedToken && !isTokenExpired(_cachedToken)) {
+    return _cachedToken
+  }
+
   // 1. Try Amplify first (for Email/Password users)
   try {
     const session = await fetchAuthSession()
     const token = session.tokens?.accessToken?.toString() || ''
-    if (token) return token
+    if (token) {
+      _cachedToken = token
+      return token
+    }
   } catch {
     // Amplify session not found, fallback to custom localStorage below
   }
 
   // 2. Custom Hybrid Refresher (for Google users)
   if (typeof window === 'undefined') return ''
-  
+
   let token = localStorage.getItem('cg_token')
   if (!token) {
     if (!window.location.pathname.startsWith('/login') && !window.location.pathname.startsWith('/auth')) {
@@ -88,6 +102,7 @@ export const getToken = async (): Promise<string> => {
     }
   }
 
+  _cachedToken = token || null
   return token || ''
 }
 

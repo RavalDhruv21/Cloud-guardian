@@ -1,33 +1,24 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { getReports, getReportContent } from '@/lib/api'
+import { getReportContent } from '@/lib/api'
+import { useReports } from '@/lib/queries'
 
 export default function ReportsPage() {
-  const [reports, setReports] = useState<any[]>([])
+  const reportsQuery = useReports()
+  const reports: any[] = reportsQuery.data?.reports || []
+  const loading = reportsQuery.isLoading
+
   const [selected, setSelected] = useState<any | null>(null)
   const [reportContent, setReportContent] = useState<string>('')
-  const [loading, setLoading] = useState(true)
   const [contentLoading, setContentLoading] = useState(false)
   const [downloading, setDownloading] = useState(false)
 
+  // Auto-select the first report once the list loads, if none is selected yet
   useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const data = await getReports()
-        const reports = data.reports || []
-        setReports(reports)
-        // Auto select first report
-        if (reports.length > 0) {
-          handleSelectReport(reports[0])
-        }
-      } catch (err) {
-        console.error('Failed to fetch reports:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchReports()
-  }, [])
+    if (selected || reports.length === 0) return
+    handleSelectReport(reports[0])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports.length])
 
   const handleSelectReport = async (report: any) => {
     setSelected(report)

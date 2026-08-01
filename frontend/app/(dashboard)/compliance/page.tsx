@@ -1,7 +1,6 @@
 'use client'
-import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getComplianceScore } from '@/lib/api'
+import { useComplianceScore } from '@/lib/queries'
 
 const SEVERITY_COLOR: Record<string, string> = {
   critical: '#F87171',
@@ -28,25 +27,11 @@ const TYPE_ICON: Record<string, string> = {
 
 export default function CompliancePage() {
   const router = useRouter()
-  const [data, setData] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-
-  const load = async (showRefresh = false) => {
-    if (showRefresh) setRefreshing(true)
-    else setLoading(true)
-    try {
-      const result = await getComplianceScore()
-      setData(result)
-    } catch (err) {
-      console.error('Compliance fetch error:', err)
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }
-
-  useEffect(() => { load() }, [])
+  const query = useComplianceScore()
+  const data = query.data
+  const loading = query.isLoading
+  const refreshing = query.isFetching && !query.isLoading
+  const load = () => query.refetch()
 
   if (loading) {
     return (
@@ -121,7 +106,7 @@ export default function CompliancePage() {
           </div>
         </div>
         <button
-          onClick={() => load(true)}
+          onClick={() => load()}
           disabled={refreshing}
           className="text-xs px-4 py-2 rounded-lg border transition-all disabled:opacity-40 hover:bg-white/5"
           style={{borderColor: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)'}}

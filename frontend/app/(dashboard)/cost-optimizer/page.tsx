@@ -1,6 +1,8 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { getCostSuggestions, dismissSuggestion, stopResource, getToken } from '@/lib/api'
+import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { getToken } from '@/lib/api'
+import { useCostSuggestions, useDismissSuggestion, queryKeys } from '@/lib/queries'
 
 interface ResolvedItem {
   id: string
@@ -12,29 +14,23 @@ interface ResolvedItem {
 }
 
 export default function CostOptimizerPage() {
-  const [suggestions, setSuggestions] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const suggestionsQuery = useCostSuggestions()
+  const suggestions: any[] = suggestionsQuery.data?.suggestions || []
+  const loading = suggestionsQuery.isLoading
+
+  const dismissMutation = useDismissSuggestion()
+  const queryClient = useQueryClient()
+
   const [resolved, setResolved] = useState<ResolvedItem[]>([])
   const [confirming, setConfirming] = useState<string | null>(null)
+  // Ids removed this session (dismissed or actioned) — filtered out
+  // immediately client-side instead of waiting on the invalidated query's
+  // background refetch, so the card disappears the instant you click.
   const [stopped, setStopped] = useState<string[]>([])
   const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
-  useEffect(() => {
-    const fetchSuggestions = async () => {
-      try {
-        const data = await getCostSuggestions()
-        setSuggestions(data.suggestions || [])
-      } catch (err) {
-        console.error('Failed to fetch suggestions:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchSuggestions()
-  }, [])
-
   const handleDismiss = async (resourceId: string) => {
-    const item = suggestions.find(s => s.resource_id === resourceId)
+    const item = suggestions.find((s: any) => s.resource_id === resourceId)
     // Add to resolved history
     setResolved(prev => [...prev, {
       id: resourceId,
@@ -44,10 +40,10 @@ export default function CostOptimizerPage() {
       time: new Date().toLocaleTimeString(),
       resource_type: item?.resource_type || 'AWS',
     }])
+    setStopped(prev => [...prev, resourceId])
     try {
-      await dismissSuggestion(resourceId)
+      await dismissMutation.mutateAsync(resourceId)
     } catch {}
-    setSuggestions(prev => prev.filter(s => s.resource_id !== resourceId))
   }
 
   const getConfirmMessage = (item: any) => {
@@ -101,6 +97,9 @@ export default function CostOptimizerPage() {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify(body),
         })
+        // These hit dedicated per-resource-type endpoints rather than the
+        // cost-suggestions mutation helpers, so reconcile the cache manually.
+        queryClient.invalidateQueries({ queryKey: queryKeys.costSuggestions })
       }
     } catch (err) {
       console.error('Action failed:', err)
@@ -116,7 +115,6 @@ export default function CostOptimizerPage() {
       resource_type: item.resource_type || 'AWS',
     }])
     setStopped(prev => [...prev, item.resource_id])
-    setSuggestions(prev => prev.filter(s => s.resource_id !== item.resource_id))
     setConfirming(null)
   }
 

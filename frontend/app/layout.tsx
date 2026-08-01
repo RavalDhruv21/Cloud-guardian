@@ -13,6 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 import ConfigureAmplifyClientSide from "@/components/ConfigureAmplify";
+import QueryProvider from "@/components/QueryProvider";
 
 export const metadata: Metadata = {
   title: "Cloud Guardian",
@@ -31,7 +32,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <ConfigureAmplifyClientSide />
-        {children}
+        <QueryProvider>{children}</QueryProvider>
       </body>
     </html>
   );

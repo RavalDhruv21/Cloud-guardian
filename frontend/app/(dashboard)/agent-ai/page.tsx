@@ -1,6 +1,8 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { getMetrics, getAnomalies, getCostSuggestions, askAgent } from '@/lib/api'
+import { queryKeys } from '@/lib/queries'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -17,6 +19,7 @@ export default function AgentAIPage() {
   const [contextChips, setContextChips] = useState<any[]>([])
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -31,10 +34,13 @@ export default function AgentAIPage() {
   const loadContext = async () => {
     setContextLoading(true)
     try {
+      // ensureQueryData reuses cached data from the shared query cache
+      // (e.g. if you were just on the dashboard) instead of always
+      // re-fetching, so this resolves near-instantly on repeat visits.
       const [m, a, c] = await Promise.all([
-        getMetrics(),
-        getAnomalies(),
-        getCostSuggestions()
+        queryClient.ensureQueryData({ queryKey: queryKeys.metrics, queryFn: getMetrics }),
+        queryClient.ensureQueryData({ queryKey: queryKeys.anomalies(undefined), queryFn: () => getAnomalies(undefined) }),
+        queryClient.ensureQueryData({ queryKey: queryKeys.costSuggestions, queryFn: () => getCostSuggestions() }),
       ])
 
       const metrics = m.metrics || []

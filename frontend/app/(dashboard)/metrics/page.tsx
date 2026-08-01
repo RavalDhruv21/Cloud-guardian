@@ -2,7 +2,11 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { getMetrics, getMetricsHistory } from '@/lib/api'
+import { useMetrics, useMetricsHistory } from '@/lib/queries'
+
+// History auto-refreshes every 5 minutes, matching CloudWatch's own
+// granularity — same cadence the old setInterval polling used.
+const HISTORY_POLL = { refetchInterval: 5 * 60 * 1000 }
 
 const statusColor = (cpu: number) =>
   cpu > 80 ? '#F87171' : cpu > 60 ? '#FBBF24' : '#34D399'
@@ -14,13 +18,13 @@ const statusLabel = (cpu: number) =>
   cpu > 80 ? 'critical' : cpu > 60 ? 'warning' : 'normal'
 
 export default function MetricsPage() {
-  const [metrics, setMetrics] = useState<any[]>([])
   const searchParams = useSearchParams()
   const instanceFromUrl = searchParams.get('instance')
   const [selected, setSelected] = useState<string | null>(instanceFromUrl)
-  const [loading, setLoading] = useState(true)
-  const [chartHistory, setChartHistory] = useState<any[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
+
+  const metricsQuery = useMetrics()
+  const metrics = metricsQuery.data?.metrics || []
+  const loading = metricsQuery.isLoading
 
   // Build instanceMap from metrics — only last 24 hours
   const instanceMap: Record<string, any[]> = {}
@@ -37,103 +41,36 @@ export default function MetricsPage() {
   const latestMetric = selectedMetrics[0]
   const currentCpu = parseFloat(latestMetric?.cpu_avg || 0)
 
-  const fetchHistory = async (instanceId: string, localMap?: Record<string, any[]>) => {
-    const mapToUse = localMap || instanceMap
-    setHistoryLoading(true)
-    setChartHistory([])
-    try {
-      const data = await getMetricsHistory(instanceId)
-      const history = data.history || []
-      if (history.length === 0) {
-        const fallback = (mapToUse[instanceId] || []).map((m: any, i: number) => ({
-          time: m.timestamp
-            ? new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
-            : `Point ${i}`,
-          cpu: parseFloat(m.cpu_avg || 0),
-          cpu_max: parseFloat(m.cpu_max || 0),
-          memory: parseFloat(m.cpu_avg || 0) * 0.7,
-          network: 0,
-        }))
-        setChartHistory(
-          fallback.length > 1 ? fallback :
-          fallback.length === 1 ? [...fallback, ...fallback] : []
-        )
-      } else {
-        setChartHistory(history.map((h: any) => ({
-          ...h,
-          memory: (h.cpu || 0) * 0.7,
-          network: 0,
-        })))
-      }
-    } catch {
-      const fallback = (mapToUse[instanceId] || []).map((m: any, i: number) => ({
-        time: m.timestamp
-          ? new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
-          : `Point ${i}`,
-        cpu: parseFloat(m.cpu_avg || 0),
-        cpu_max: parseFloat(m.cpu_max || 0),
-        memory: parseFloat(m.cpu_avg || 0) * 0.7,
-        network: 0,
-      }))
-      setChartHistory(
-        fallback.length > 1 ? fallback :
-        fallback.length === 1 ? [...fallback, ...fallback] : []
-      )
-    } finally {
-      setHistoryLoading(false)
-    }
+  // Auto-select the first instance once metrics load, if none is selected yet
+  useEffect(() => {
+    if (selected || instances.length === 0) return
+    setSelected(instanceFromUrl || instances[0])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instances.join(',')])
+
+  const historyQuery = useMetricsHistory(selected, HISTORY_POLL)
+  const historyLoading = historyQuery.isFetching
+  const history = historyQuery.data?.history || []
+
+  // Fall back to whatever we already have from the metrics table (e.g. a
+  // brand-new account with less than the full CloudWatch history window)
+  // if the dedicated history endpoint comes back empty or errors.
+  const buildFallback = () => {
+    const fallback = selectedMetrics.map((m: any, i: number) => ({
+      time: m.timestamp
+        ? new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+        : `Point ${i}`,
+      cpu: parseFloat(m.cpu_avg || 0),
+      cpu_max: parseFloat(m.cpu_max || 0),
+      memory: parseFloat(m.cpu_avg || 0) * 0.7,
+      network: 0,
+    }))
+    return fallback.length > 1 ? fallback : fallback.length === 1 ? [...fallback, ...fallback] : []
   }
 
-  useEffect(() => {
-    const fetchMetrics = async () => {
-      try {
-        const data = await getMetrics()
-        const items = data.metrics || []
-        setMetrics(items)
-
-        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-        const localMap: Record<string, any[]> = {}
-        items
-          .filter((m: any) => (m.timestamp > cutoff) || (m.collected_at > cutoff))
-          .forEach((m: any) => {
-            if (!localMap[m.instance_id]) localMap[m.instance_id] = []
-            localMap[m.instance_id].push(m)
-          })
-
-        const firstInstance = instanceFromUrl ||
-          (Object.keys(localMap).length > 0 ? Object.keys(localMap)[0] : null)
-
-        if (firstInstance) {
-          setSelected(firstInstance)
-          fetchHistory(firstInstance, localMap)
-
-          // Auto-refresh every 5 minutes like CloudWatch
-          const interval = setInterval(() => {
-            fetchHistory(firstInstance, localMap)
-          }, 5 * 60 * 1000)
-
-          return () => clearInterval(interval)
-        }
-      } catch (err) {
-        console.error('Failed to fetch metrics:', err)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchMetrics()
-  }, [])
-
-  const data = chartHistory.length > 0
-    ? chartHistory
-    : selectedMetrics.map((m: any, i: number) => ({
-        time: m.timestamp
-          ? new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
-          : `Point ${i}`,
-        cpu: parseFloat(m.cpu_avg || 0),
-        cpu_max: parseFloat(m.cpu_max || 0),
-        memory: parseFloat(m.cpu_avg || 0) * 0.7,
-        network: 0,
-      }))
+  const data = history.length > 0
+    ? history.map((h: any) => ({ ...h, memory: (h.cpu || 0) * 0.7, network: 0 }))
+    : buildFallback()
 
   if (loading) {
     return (
@@ -189,10 +126,7 @@ export default function MetricsPage() {
           return (
             <div
               key={instanceId}
-              onClick={() => {
-                setSelected(instanceId)
-                fetchHistory(instanceId)
-              }}
+              onClick={() => setSelected(instanceId)}
               className="auth-glass p-4 cursor-pointer transition-all hover:scale-[1.02]"
               style={{
                 borderLeft: `3px solid ${statusColor(cpu)}`,

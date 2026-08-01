@@ -980,39 +980,30 @@ def get_user_profile(user_id):
 
 # ── GET /live-metrics ──────────────────────────────────────
 def get_live_metrics(region='us-east-1', user_id='default-user'):
+    """
+    Reads the collector's already-batched CloudWatch data from
+    cloud-guardian-metrics instead of re-fetching live from AWS. The old
+    version did an STS AssumeRole plus one describe_instances plus one
+    get_metric_statistics call PER RUNNING INSTANCE, serially, on every
+    single page load — multiple seconds even for a handful of instances.
+    The collector Lambda already batches all of this (get_metric_data,
+    one paginated call for the whole account) on its own schedule and
+    persists it here, so this is now a single DynamoDB query.
+    """
     try:
-        role_arn, effective_region, account_id = get_user_role_arn(user_id=user_id, request_region=region)
+        _, effective_region, account_id = get_user_role_arn(user_id=user_id, request_region=region)
         if not account_id:
             return response(200, {'metrics': [], 'account_id': None})
-        ec2 = get_assumed_client('ec2', role_arn, effective_region)
-        cloudwatch = get_assumed_client('cloudwatch', role_arn, effective_region)
-        from datetime import timedelta
-        instances_resp = ec2.describe_instances(Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
-        live_data = []
-        end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(hours=1)
-        for reservation in instances_resp['Reservations']:
-            for inst in reservation['Instances']:
-                instance_id = inst['InstanceId']
-                cw_result = cloudwatch.get_metric_statistics(
-                    Namespace='AWS/EC2', MetricName='CPUUtilization',
-                    Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
-                    StartTime=start_time, EndTime=end_time, Period=300, Statistics=['Average', 'Maximum']
-                )
-                datapoints = cw_result.get('Datapoints', [])
-                cpu_avg = round(sum(d['Average'] for d in datapoints) / len(datapoints), 3) if datapoints else 0
-                cpu_max = round(max(d['Maximum'] for d in datapoints), 3) if datapoints else 0
-                live_data.append({
-                    'instance_id': instance_id,
-                    'instance_type': inst['InstanceType'],
-                    'account_id': account_id,
-                    'region': effective_region,
-                    'cpu_avg': cpu_avg,
-                    'cpu_max': cpu_max,
-                    'timestamp': datetime.now(timezone.utc).isoformat(),
-                    'state': inst['State']['Name'],
-                })
-        return response(200, {'metrics': live_data, 'account_id': account_id, 'region': effective_region})
+        table = dynamodb.Table(os.getenv('DYNAMODB_METRICS_TABLE', 'cloud-guardian-metrics'))
+        result = table.query(
+            IndexName='account_id-timestamp-index',
+            KeyConditionExpression=Key('account_id').eq(account_id),
+            ScanIndexForward=False,
+        )
+        items = result.get('Items', [])
+        if effective_region:
+            items = [i for i in items if i.get('region', 'us-east-1') == effective_region]
+        return response(200, {'metrics': items, 'account_id': account_id, 'region': effective_region})
     except Exception as e:
         return response(500, {'error': str(e)})
 
