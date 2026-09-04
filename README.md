@@ -12,6 +12,12 @@
 ![Gemini](https://img.shields.io/badge/Gemini%20API-8E75B2?logo=googlegemini&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
+## Live Demo
+
+**[https://d1nybctg2u5m4a.cloudfront.net/](https://d1nybctg2u5m4a.cloudfront.net/)**
+
+The app is deployed and running on AWS behind CloudFront. Sign up or log in (Cognito-backed auth) to explore the dashboard, connect an AWS account via the provided CloudFormation role, and see live security/cost findings.
+
 ## Architecture
 
 ![Cloud Guardian Architecture](docs/Architecture.png)
@@ -21,7 +27,7 @@
 1. **Frontend** — A Next.js app served from S3 behind CloudFront. Users authenticate via **Cognito** and receive a JWT, which is attached to every API call.
 2. **API Layer** — API Gateway forwards authenticated requests to a single **API Lambda** (26 routes) that handles metrics, anomalies, cost suggestions, remediation actions, reports, security scans, and the AI agent.
 3. **Customer AWS Account** — Using **STS AssumeRole** against an **IAM Role deployed via CloudFormation** in the customer's own account, Cloud Guardian reads EC2/RDS/S3/CloudWatch/CloudTrail/Cost Explorer data and performs scoped remediation actions, without ever storing customer credentials.
-4. **Background Processing** — **EventBridge schedules** trigger scans that fan out through **SQS** to 5 specialized Lambdas: collector, cost optimizer, remediation, report generator, and AI analyzer.
+4. **Background Processing** — **EventBridge schedules** trigger scans that fan out through **SQS** to 6 specialized Lambdas: collector, cost optimizer, remediation, report generator, AI analyzer, and analytics export.
 5. **Data Stores** — Findings and metrics are persisted to **DynamoDB** (4 tables) and generated reports to **S3**.
 6. **Integrations** — The AI analyzer calls the **Gemini API** for natural-language security/cost insights, and **SNS** delivers real-time alerts.
 
@@ -48,6 +54,7 @@
 | Alerting | Amazon SNS |
 | CDN / hosting | Amazon CloudFront, S3 static hosting |
 | CI/CD | GitHub Actions |
+| IaC | Terraform (learning-stage backend scaffold, see [`terraform/`](terraform/)) |
 
 ## Repository Structure
 
@@ -60,7 +67,9 @@ cloud-guardian/
 │   ├── cost_optimizer/          # Detects idle/unused/oversized resources
 │   ├── remediation/             # Executes auto-remediation actions (stop, delete, release, fix)
 │   ├── report_generator/        # Generates and stores account reports
-│   └── ai_analyzer/             # Gemini-powered security/cost analysis
+│   ├── ai_analyzer/             # Gemini-powered security/cost analysis
+│   └── analytics_export/        # Exports cost/anomaly data to S3
+├── terraform/                   # Terraform IaC (learning-stage backend scaffold, isolated from prod)
 ├── cf-function.js               # CloudFront function for Next.js static-export URL rewriting
 ├── .github/workflows/deploy.yml # CI/CD: builds Lambdas + frontend, deploys to AWS
 ├── tests/                       # Test suite
@@ -125,10 +134,14 @@ The resulting Role ARN is pasted into the Cloud Guardian dashboard to complete t
 
 Deployment is fully automated via [GitHub Actions](.github/workflows/deploy.yml) on every push to `master`:
 
-1. Packages and deploys all 6 Lambda functions
+1. Packages and deploys all 7 Lambda functions
 2. Builds the Next.js frontend as a static export
 3. Syncs the build to S3 with appropriate cache headers
 4. Updates the CloudFront rewrite function and invalidates the cache
+
+## Infrastructure as Code
+
+The production infrastructure above is currently deployed by hand and via [GitHub Actions](.github/workflows/deploy.yml). [`terraform/`](terraform/) holds a Terraform scaffold that models the backend (Lambdas, API Gateway, DynamoDB, SQS, SNS, EventBridge, IAM) for learning purposes — it uses its own resource naming and is fully isolated from the live prod resources described here. See [`terraform/README.md`](terraform/README.md) for scope and usage.
 
 ## License
 
