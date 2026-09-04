@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+
+project_name = "cloudguardian-lab"
+environment  = "dev"
+aws_region   = "us-east-1"
+
+# Leave blank unless you want ai_analyzer/report_generator to actually call Gemini.
+gemini_api_key = ""
+
+allowed_origin = "http://localhost:3000"
